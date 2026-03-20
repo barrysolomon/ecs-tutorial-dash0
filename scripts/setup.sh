@@ -770,6 +770,16 @@ for c in template["containerDefinitions"]:
                 e["value"] = "api.<REGION>.aws.dash0.com:4317"
             if e["name"] == "OTEL_SERVICE_NAME":
                 e["value"] = "<YOUR_SERVICE_NAME>"
+            if e["name"] == "ENABLE_AWS_SERVICES":
+                e["value"] = "<true|false>"
+            if e["name"] == "AWS_REGION":
+                e["value"] = "<REGION>"
+            if e["name"] == "DYNAMO_TABLE":
+                e["value"] = "<DYNAMO_TABLE_NAME>"
+            if e["name"] == "S3_BUCKET":
+                e["value"] = "dash0demo-data-<ACCOUNT_ID>-<REGION>"
+if "taskRoleArn" in template:
+    template["taskRoleArn"] = "arn:aws:iam::<ACCOUNT_ID>:role/<TASK_ROLE_NAME>"
 
 with open(out_dir / "task-definition-template.json", "w") as f:
     json.dump(template, f, indent=2)

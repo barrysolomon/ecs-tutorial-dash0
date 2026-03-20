@@ -60,6 +60,23 @@
         {
           "name": "OTEL_PROPAGATORS",
           "value": "tracecontext,baggage"
+
+        },
+        {
+          "name": "ENABLE_AWS_SERVICES",
+          "value": "<true|false>"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "<REGION>"
+        },
+        {
+          "name": "DYNAMO_TABLE",
+          "value": "<DYNAMO_TABLE_NAME>"
+        },
+        {
+          "name": "S3_BUCKET",
+          "value": "dash0demo-data-<ACCOUNT_ID>-<REGION>"
         }
       ],
       "logConfiguration": {
@@ -137,5 +154,6 @@
         }
       }
     }
-  ]
+  ],
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/<TASK_ROLE_NAME>"
 }
