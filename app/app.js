@@ -42,6 +42,23 @@ function log(severity, msg, attrs = {}) {
   console.log(JSON.stringify({ level: severity, msg, ...extra, ...attrs }));
 }
 
+// ── AWS services (optional — enabled via ENABLE_AWS_SERVICES=true) ──────────
+const AWS_ENABLED = (process.env.ENABLE_AWS_SERVICES || '').toLowerCase() === 'true';
+const AWS_REGION  = process.env.AWS_REGION || 'eu-west-1';
+const DYNAMO_TABLE = process.env.DYNAMO_TABLE || 'dash0-demo-orders';
+const S3_BUCKET    = process.env.S3_BUCKET    || 'dash0-demo-data';
+
+let dynamoClient, s3Client;
+if (AWS_ENABLED) {
+  const { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand } = require('@aws-sdk/client-dynamodb');
+  const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+  dynamoClient = new DynamoDBClient({ region: AWS_REGION });
+  s3Client     = new S3Client({ region: AWS_REGION });
+  console.log(`AWS services ENABLED — DynamoDB: ${DYNAMO_TABLE}, S3: ${S3_BUCKET}`);
+} else {
+  console.log('AWS services DISABLED — set ENABLE_AWS_SERVICES=true to enable DynamoDB/S3');
+}
+
 // ── HTTP server ────────────────────────────────────────────────────────────
 const http  = require('http');
 const https = require('https');
@@ -69,14 +86,17 @@ const ROUTES = {
     res.end(JSON.stringify({ status: 'ok', service: 'dash0-demo', ts: new Date().toISOString() }));
   },
 
-  // ── Simple success trace + log ────────────────────────────────────────────
+  // ── Order flow — with optional DynamoDB + S3 for deeper traces ───────────
   'GET /api/order': async (req, res) => {
-    const orderId = `ORD-${Math.floor(Math.random() * 90000) + 10000}`;
-    log('INFO', 'Processing order', { orderId, customerId: 'CUST-42' });
+    const orderId    = `ORD-${Math.floor(Math.random() * 90000) + 10000}`;
+    const customerId = `CUST-${Math.floor(Math.random() * 100) + 1}`;
+    const amount     = (Math.random() * 200 + 10).toFixed(2);
+    const items      = Math.ceil(Math.random() * 5);
+    log('INFO', 'Processing order', { orderId, customerId });
 
     await tracer.startActiveSpan('validate-order', async span => {
       span.setAttribute('order.id', orderId);
-      span.setAttribute('order.items', Math.ceil(Math.random() * 5));
+      span.setAttribute('order.items', items);
       await sleep(20 + Math.random() * 30);
       log('DEBUG', 'Order validated', { orderId });
       span.end();
@@ -84,15 +104,127 @@ const ROUTES = {
 
     await tracer.startActiveSpan('charge-payment', async span => {
       span.setAttribute('payment.method', 'card');
-      span.setAttribute('payment.amount', (Math.random() * 200 + 10).toFixed(2));
+      span.setAttribute('payment.amount', amount);
       await sleep(40 + Math.random() * 60);
       log('INFO', 'Payment charged', { orderId });
       span.end();
     });
 
+    // ── AWS enrichment (DynamoDB write + read, S3 receipt) ──────────────
+    if (AWS_ENABLED) {
+      const { PutItemCommand, GetItemCommand } = require('@aws-sdk/client-dynamodb');
+      const { PutObjectCommand } = require('@aws-sdk/client-s3');
+
+      const orderRecord = {
+        orderId:    { S: orderId },
+        customerId: { S: customerId },
+        amount:     { N: amount },
+        items:      { N: String(items) },
+        status:     { S: 'confirmed' },
+        createdAt:  { S: new Date().toISOString() },
+      };
+
+      await tracer.startActiveSpan('dynamodb-put-order', async span => {
+        span.setAttribute('db.system', 'dynamodb');
+        span.setAttribute('db.operation', 'PutItem');
+        span.setAttribute('aws.dynamodb.table_names', DYNAMO_TABLE);
+        span.setAttribute('order.id', orderId);
+        await dynamoClient.send(new PutItemCommand({
+          TableName: DYNAMO_TABLE,
+          Item: orderRecord,
+        }));
+        log('INFO', 'Order persisted to DynamoDB', { orderId, table: DYNAMO_TABLE });
+        span.end();
+      });
+
+      await tracer.startActiveSpan('dynamodb-get-order', async span => {
+        span.setAttribute('db.system', 'dynamodb');
+        span.setAttribute('db.operation', 'GetItem');
+        span.setAttribute('aws.dynamodb.table_names', DYNAMO_TABLE);
+        const result = await dynamoClient.send(new GetItemCommand({
+          TableName: DYNAMO_TABLE,
+          Key: { orderId: { S: orderId } },
+        }));
+        span.setAttribute('db.response.found', !!result.Item);
+        log('DEBUG', 'Order read back from DynamoDB', { orderId, found: !!result.Item });
+        span.end();
+      });
+
+      await tracer.startActiveSpan('s3-put-receipt', async span => {
+        span.setAttribute('rpc.system', 'aws-api');
+        span.setAttribute('rpc.service', 'S3');
+        span.setAttribute('aws.s3.bucket', S3_BUCKET);
+        const key = `receipts/${orderId}.json`;
+        span.setAttribute('aws.s3.key', key);
+        const receipt = JSON.stringify({
+          orderId, customerId, amount, items,
+          status: 'confirmed',
+          timestamp: new Date().toISOString(),
+        }, null, 2);
+        await s3Client.send(new PutObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: key,
+          Body: receipt,
+          ContentType: 'application/json',
+        }));
+        log('INFO', 'Receipt saved to S3', { orderId, bucket: S3_BUCKET, key });
+        span.end();
+      });
+    }
+
     log('INFO', 'Order complete', { orderId });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ orderId, status: 'confirmed' }));
+    res.end(JSON.stringify({ orderId, customerId, amount, items, status: 'confirmed', awsEnriched: AWS_ENABLED }));
+  },
+
+  // ── Inventory check — DynamoDB scan + S3 report (AWS-only endpoint) ──────
+  'GET /api/inventory': async (req, res) => {
+    if (!AWS_ENABLED) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: 'AWS services disabled — set ENABLE_AWS_SERVICES=true', items: [] }));
+      return;
+    }
+    const { ScanCommand } = require('@aws-sdk/client-dynamodb');
+    const { PutObjectCommand } = require('@aws-sdk/client-s3');
+
+    let orders = [];
+    await tracer.startActiveSpan('dynamodb-scan-orders', async span => {
+      span.setAttribute('db.system', 'dynamodb');
+      span.setAttribute('db.operation', 'Scan');
+      span.setAttribute('aws.dynamodb.table_names', DYNAMO_TABLE);
+      const result = await dynamoClient.send(new ScanCommand({
+        TableName: DYNAMO_TABLE,
+        Limit: 20,
+      }));
+      orders = (result.Items || []).map(item => ({
+        orderId: item.orderId?.S,
+        customerId: item.customerId?.S,
+        amount: item.amount?.N,
+        status: item.status?.S,
+      }));
+      span.setAttribute('db.response.count', orders.length);
+      log('INFO', 'Inventory scan complete', { count: orders.length });
+      span.end();
+    });
+
+    await tracer.startActiveSpan('s3-put-report', async span => {
+      span.setAttribute('rpc.system', 'aws-api');
+      span.setAttribute('rpc.service', 'S3');
+      span.setAttribute('aws.s3.bucket', S3_BUCKET);
+      const key = `reports/inventory-${Date.now()}.json`;
+      span.setAttribute('aws.s3.key', key);
+      await s3Client.send(new PutObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+        Body: JSON.stringify({ generatedAt: new Date().toISOString(), orders }, null, 2),
+        ContentType: 'application/json',
+      }));
+      log('INFO', 'Inventory report saved to S3', { bucket: S3_BUCKET, key });
+      span.end();
+    });
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ orders, count: orders.length }));
   },
 
   // ── Slow request (shows latency in RED metrics) ───────────────────────────
@@ -216,13 +348,15 @@ server.listen(PORT, () => {
   log('INFO', `Dash0 demo app listening`, { port: PORT });
   console.log(`
   Endpoints:
-    GET /health        — health check (no trace)
-    GET /api/order     — happy path: multi-span order flow
-    GET /api/slow      — slow query (latency spike)
-    GET /api/error     — error span + ERROR log
-    GET /api/fetch     — outbound HTTP call (multi-service trace)
-    GET /api/burst     — 10 parallel child spans (waterfall demo)
-    GET /api/load      — fires random traffic (use in a loop)
+    GET /health         — health check (no trace)
+    GET /api/order      — order flow (+ DynamoDB/S3 if AWS enabled)
+    GET /api/inventory  — scan orders + S3 report (AWS-only)
+    GET /api/slow       — slow query (latency spike)
+    GET /api/error      — error span + ERROR log
+    GET /api/fetch      — outbound HTTP call (multi-service trace)
+    GET /api/burst      — 10 parallel child spans (waterfall demo)
+    GET /api/load       — fires random traffic (use in a loop)
+  AWS services: ${AWS_ENABLED ? 'ENABLED' : 'DISABLED'}
   `);
 });
 

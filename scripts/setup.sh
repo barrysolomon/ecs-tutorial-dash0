@@ -15,6 +15,20 @@
 # =============================================================================
 set -euo pipefail
 
+# ── Load .env if present (command-line env vars take precedence) ────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+if [[ -f "${ENV_FILE}" ]]; then
+    while IFS='=' read -r key value; do
+        # Skip comments and blank lines
+        [[ -z "${key}" || "${key}" =~ ^# ]] && continue
+        # Only set if not already in environment (CLI overrides .env)
+        if [[ -z "${!key+x}" ]]; then
+            export "${key}=${value}"
+        fi
+    done < "${ENV_FILE}"
+fi
+
 # ── Config (override via env) ─────────────────────────────────────────────────
 REGION="${AWS_REGION:-eu-west-1}"
 DASH0_ENDPOINT="${DASH0_ENDPOINT:-ingress.eu-west-1.aws.dash0.com:4317}"
@@ -23,6 +37,8 @@ SERVICE_NAME="dash0-demo"
 CLUSTER_NAME="dash0-demo-cluster"
 PREFIX="dash0demo"
 IMAGE_TAG="latest"
+ENABLE_AWS_SERVICES="${ENABLE_AWS_SERVICES:-false}"
+DYNAMO_TABLE="${PREFIX}-orders"
 
 # ── Colours & helpers ─────────────────────────────────────────────────────────
 G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; R='\033[0;31m'
@@ -33,7 +49,6 @@ ok()   { echo -e "${G}  ✓ $1${NC}"; }
 skip() { echo -e "${C}  ● $1 ${DIM}(already exists)${NC}"; }
 info() { echo -e "${DIM}  $1${NC}"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="${SCRIPT_DIR}/.state"
 
 # ── Load prior state if resuming ──────────────────────────────────────────────
@@ -62,12 +77,17 @@ SERVICE_NAME=${SERVICE_NAME:-}
 REGION=${REGION:-}
 ECR_REPO=${ECR_REPO:-}
 LOG_GROUP=${LOG_GROUP:-}
+ENABLE_AWS_SERVICES=${ENABLE_AWS_SERVICES:-}
+DYNAMO_TABLE=${DYNAMO_TABLE:-}
+S3_BUCKET=${S3_BUCKET:-}
+TASK_ROLE_NAME=${TASK_ROLE_NAME:-}
 STATEOF
 }
 
 # ── Derive account id ─────────────────────────────────────────────────────────
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_REPO="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${SERVICE_NAME}"
+S3_BUCKET="${PREFIX}-data-${ACCOUNT_ID}-${REGION}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 step "1/10  Creating ECR repository"
@@ -409,6 +429,93 @@ fi
 save_state
 
 # ─────────────────────────────────────────────────────────────────────────────
+step "7b/10  Creating AWS service resources (DynamoDB, S3, task role)"
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ "${ENABLE_AWS_SERVICES}" == "true" ]]; then
+    # ── DynamoDB table ──
+    if aws dynamodb describe-table --table-name "${DYNAMO_TABLE}" \
+        --region "${REGION}" &>/dev/null; then
+        skip "DynamoDB table: ${DYNAMO_TABLE}"
+    else
+        aws dynamodb create-table \
+            --table-name "${DYNAMO_TABLE}" \
+            --attribute-definitions AttributeName=orderId,AttributeType=S \
+            --key-schema AttributeName=orderId,KeyType=HASH \
+            --billing-mode PAY_PER_REQUEST \
+            --region "${REGION}" \
+            --query 'TableDescription.TableName' --output text
+        aws dynamodb wait table-exists --table-name "${DYNAMO_TABLE}" --region "${REGION}"
+        ok "DynamoDB table: ${DYNAMO_TABLE}"
+    fi
+
+    # ── S3 bucket ──
+    if aws s3api head-bucket --bucket "${S3_BUCKET}" --region "${REGION}" 2>/dev/null; then
+        skip "S3 bucket: ${S3_BUCKET}"
+    else
+        if [[ "${REGION}" == "us-east-1" ]]; then
+            aws s3api create-bucket --bucket "${S3_BUCKET}" --region "${REGION}"
+        else
+            aws s3api create-bucket --bucket "${S3_BUCKET}" --region "${REGION}" \
+                --create-bucket-configuration LocationConstraint="${REGION}"
+        fi
+        ok "S3 bucket: ${S3_BUCKET}"
+    fi
+
+    # ── Task role (for app container to call DynamoDB/S3) ──
+    TASK_ROLE_NAME="${PREFIX}-task-role"
+    TASK_ROLE_ARN=$(aws iam get-role --role-name "${TASK_ROLE_NAME}" \
+        --query 'Role.Arn' --output text 2>/dev/null || true)
+    if [[ -z "${TASK_ROLE_ARN}" || "${TASK_ROLE_ARN}" == "None" ]]; then
+        TASK_ROLE_ARN=$(aws iam create-role \
+            --role-name "${TASK_ROLE_NAME}" \
+            --assume-role-policy-document '{
+              "Version":"2012-10-17",
+              "Statement":[{
+                "Effect":"Allow",
+                "Principal":{"Service":"ecs-tasks.amazonaws.com"},
+                "Action":"sts:AssumeRole"
+              }]
+            }' --query 'Role.Arn' --output text)
+        aws iam put-role-policy \
+            --role-name "${TASK_ROLE_NAME}" \
+            --policy-name "dash0-demo-aws-services" \
+            --policy-document "{
+              \"Version\":\"2012-10-17\",
+              \"Statement\":[
+                {
+                  \"Effect\":\"Allow\",
+                  \"Action\":[
+                    \"dynamodb:PutItem\",
+                    \"dynamodb:GetItem\",
+                    \"dynamodb:Scan\",
+                    \"dynamodb:Query\"
+                  ],
+                  \"Resource\":\"arn:aws:dynamodb:${REGION}:${ACCOUNT_ID}:table/${DYNAMO_TABLE}\"
+                },
+                {
+                  \"Effect\":\"Allow\",
+                  \"Action\":[
+                    \"s3:PutObject\",
+                    \"s3:GetObject\",
+                    \"s3:ListBucket\"
+                  ],
+                  \"Resource\":[
+                    \"arn:aws:s3:::${S3_BUCKET}\",
+                    \"arn:aws:s3:::${S3_BUCKET}/*\"
+                  ]
+                }
+              ]
+            }"
+        ok "Task role: ${TASK_ROLE_ARN}"
+    else
+        skip "Task role: ${TASK_ROLE_ARN}"
+    fi
+    save_state
+else
+    info "AWS services disabled (set ENABLE_AWS_SERVICES=true to create DynamoDB/S3)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 step "8/10  Creating ECS cluster"
 # ─────────────────────────────────────────────────────────────────────────────
 EXISTING_CLUSTER=$(aws ecs describe-clusters --clusters "${CLUSTER_NAME}" \
@@ -529,8 +636,31 @@ _OTEL_COLLECTOR_CONFIG="${OTEL_COLLECTOR_CONFIG}" \
 _APP_HEALTH_CMD="node -e \"require('http').get('http://localhost:3000/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\"" \
 _TASK_DEF_FILE="${TASK_DEF_FILE}" \
 _SCRIPT_DIR="${SCRIPT_DIR}" \
+_ENABLE_AWS_SERVICES="${ENABLE_AWS_SERVICES}" \
+_DYNAMO_TABLE="${DYNAMO_TABLE}" \
+_S3_BUCKET="${S3_BUCKET}" \
+_TASK_ROLE_ARN="${TASK_ROLE_ARN:-}" \
 python3 -c '
 import json, os
+
+aws_enabled = os.environ.get("_ENABLE_AWS_SERVICES", "false") == "true"
+task_role_arn = os.environ.get("_TASK_ROLE_ARN", "")
+
+app_env = [
+    {"name": "PORT",                          "value": "3000"},
+    {"name": "OTEL_SERVICE_NAME",             "value": os.environ["_SERVICE_NAME"]},
+    {"name": "DEPLOYMENT_ENV",                "value": "demo"},
+    {"name": "OTEL_EXPORTER_OTLP_ENDPOINT",  "value": "http://localhost:4317"},
+    {"name": "OTEL_EXPORTER_OTLP_PROTOCOL",  "value": "grpc"},
+    {"name": "OTEL_RESOURCE_ATTRIBUTES",      "value": "deployment.environment=demo"},
+    {"name": "OTEL_TRACES_EXPORTER",          "value": "otlp"},
+    {"name": "OTEL_LOGS_EXPORTER",            "value": "otlp"},
+    {"name": "OTEL_PROPAGATORS",              "value": "tracecontext,baggage"},
+    {"name": "ENABLE_AWS_SERVICES",           "value": str(aws_enabled).lower()},
+    {"name": "AWS_REGION",                    "value": os.environ["_REGION"]},
+    {"name": "DYNAMO_TABLE",                  "value": os.environ["_DYNAMO_TABLE"]},
+    {"name": "S3_BUCKET",                     "value": os.environ["_S3_BUCKET"]},
+]
 
 task_def = {
     "family": os.environ["_SERVICE_NAME"],
@@ -550,17 +680,7 @@ task_def = {
             "portMappings": [
                 {"containerPort": 3000, "protocol": "tcp"}
             ],
-            "environment": [
-                {"name": "PORT",                          "value": "3000"},
-                {"name": "OTEL_SERVICE_NAME",             "value": os.environ["_SERVICE_NAME"]},
-                {"name": "DEPLOYMENT_ENV",                "value": "demo"},
-                {"name": "OTEL_EXPORTER_OTLP_ENDPOINT",  "value": "http://localhost:4317"},
-                {"name": "OTEL_EXPORTER_OTLP_PROTOCOL",  "value": "grpc"},
-                {"name": "OTEL_RESOURCE_ATTRIBUTES",      "value": "deployment.environment=demo"},
-                {"name": "OTEL_TRACES_EXPORTER",          "value": "otlp"},
-                {"name": "OTEL_LOGS_EXPORTER",            "value": "otlp"},
-                {"name": "OTEL_PROPAGATORS",              "value": "tracecontext,baggage"}
-            ],
+            "environment": app_env,
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -612,6 +732,9 @@ task_def = {
         }
     ]
 }
+
+if aws_enabled and task_role_arn:
+    task_def["taskRoleArn"] = task_role_arn
 
 with open(os.environ["_TASK_DEF_FILE"], "w") as f:
     json.dump(task_def, f, indent=2)
@@ -748,11 +871,20 @@ echo ""
 echo -e "  ${BOLD}Your endpoint:${NC}  ${G}http://${ALB_DNS}${NC}"
 echo ""
 echo -e "  ${BOLD}Try these:${NC}"
-echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/order${NC}  ${DIM}# happy path trace${NC}"
-echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/slow${NC}   ${DIM}# latency spike${NC}"
-echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/error${NC}  ${DIM}# error span${NC}"
-echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/burst${NC}  ${DIM}# 10 parallel child spans${NC}"
-echo -e "  ${DIM}  └─${NC} curl ${C}http://${ALB_DNS}/api/fetch${NC}  ${DIM}# outbound HTTP${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/order${NC}     ${DIM}# order flow (+ DynamoDB/S3 if enabled)${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/inventory${NC} ${DIM}# scan orders + S3 report (AWS-only)${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/slow${NC}      ${DIM}# latency spike${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/error${NC}     ${DIM}# error span${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/burst${NC}     ${DIM}# 10 parallel child spans${NC}"
+echo -e "  ${DIM}  └─${NC} curl ${C}http://${ALB_DNS}/api/fetch${NC}     ${DIM}# outbound HTTP${NC}"
+echo ""
+if [[ "${ENABLE_AWS_SERVICES}" == "true" ]]; then
+    echo -e "  ${BOLD}AWS services:${NC}  ${G}ENABLED${NC}"
+    echo -e "  ${DIM}  ├─${NC} DynamoDB: ${C}${DYNAMO_TABLE}${NC}"
+    echo -e "  ${DIM}  └─${NC} S3:       ${C}${S3_BUCKET}${NC}"
+else
+    echo -e "  ${BOLD}AWS services:${NC}  ${Y}DISABLED${NC} ${DIM}(set ENABLE_AWS_SERVICES=true to enable)${NC}"
+fi
 echo ""
 echo -e "  ${Y}Fire a burst:${NC}  ./scripts/fire.sh http://${ALB_DNS}"
 echo -e "  ${Y}Dash0:${NC}         https://app.dash0.com → Services → dash0-demo"

@@ -17,16 +17,16 @@ G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; R='\033[0;31m'
 C='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 
 ENDPOINTS=(
-    "/api/order"   # 40% — happy path
+    "/api/order"      # 30% — order flow (+ DynamoDB/S3 if AWS enabled)
     "/api/order"
     "/api/order"
-    "/api/order"
-    "/api/burst"   # 20% — parallel spans (great for waterfall demo)
+    "/api/inventory"  # 10% — DynamoDB scan + S3 report (graceful no-op if disabled)
+    "/api/burst"      # 20% — parallel spans (great for waterfall demo)
     "/api/burst"
-    "/api/slow"    # 20% — latency spike
+    "/api/slow"       # 20% — latency spike
     "/api/slow"
-    "/api/error"   # 10% — errors
-    "/api/fetch"   # 10% — outbound HTTP
+    "/api/error"      # 10% — errors
+    "/api/fetch"      # 10% — outbound HTTP
 )
 
 TOTAL=${#ENDPOINTS[@]}
