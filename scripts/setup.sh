@@ -24,12 +24,14 @@ CLUSTER_NAME="dash0-demo-cluster"
 PREFIX="dash0demo"
 IMAGE_TAG="latest"
 
-# ── Colours ───────────────────────────────────────────────────────────────────
-G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; R='\033[0;31m'; NC='\033[0m'
+# ── Colours & helpers ─────────────────────────────────────────────────────────
+G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; R='\033[0;31m'
+C='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+
 step() { echo -e "\n${B}▶ $1${NC}"; }
-ok()   { echo -e "${G}✓ $1${NC}"; }
-skip() { echo -e "${Y}● $1 (already exists)${NC}"; }
-info() { echo -e "${Y}  $1${NC}"; }
+ok()   { echo -e "${G}  ✓ $1${NC}"; }
+skip() { echo -e "${C}  ● $1 ${DIM}(already exists)${NC}"; }
+info() { echo -e "${DIM}  $1${NC}"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="${SCRIPT_DIR}/.state"
@@ -728,38 +730,37 @@ aws ecs wait services-stable \
 save_state
 
 echo ""
-echo "═══════════════════════════════════════════════════════════════"
-echo -e "${G}  ✓ SETUP COMPLETE (with OTel Collector sidecar)${NC}"
-echo "═══════════════════════════════════════════════════════════════"
+echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BOLD}${G}  ✓ SETUP COMPLETE${NC}  ${DIM}(with OTel Collector sidecar)${NC}"
+echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo -e "  ${Y}Architecture:${NC}"
-echo "    app (port 3000) → localhost:4317 → OTel Collector sidecar → Dash0"
+echo -e "  ${C}┌──────────────────────────────────────────────────────────┐${NC}"
+echo -e "  ${C}│${NC}  ${BOLD}Architecture${NC}                                             ${C}│${NC}"
+echo -e "  ${C}│${NC}  app :3000 ──→ localhost:4317 ──→ OTel Collector ──→ Dash0 ${C}│${NC}"
+echo -e "  ${C}└──────────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "  ${Y}Collector enrichments:${NC}"
-echo "    resourcedetection (ecs, ec2) — auto-stamps cluster/task/AZ metadata"
-echo "    batch — groups spans before export"
-echo "    filter — drops /health check spans"
-echo "    memory_limiter — back-pressure protection"
+echo -e "  ${BOLD}Collector pipeline:${NC}"
+echo -e "  ${DIM}  ├─${NC} resourcedetection ${DIM}— auto-stamps cluster/task/AZ metadata${NC}"
+echo -e "  ${DIM}  ├─${NC} batch             ${DIM}— groups spans before export${NC}"
+echo -e "  ${DIM}  ├─${NC} filter            ${DIM}— drops /health check spans${NC}"
+echo -e "  ${DIM}  └─${NC} memory_limiter    ${DIM}— back-pressure protection${NC}"
 echo ""
-echo -e "  ${Y}Your endpoint:${NC}  http://${ALB_DNS}"
+echo -e "  ${BOLD}Your endpoint:${NC}  ${G}http://${ALB_DNS}${NC}"
 echo ""
-echo "  Endpoints to trigger telemetry:"
-echo "    curl http://${ALB_DNS}/api/order    # happy path trace"
-echo "    curl http://${ALB_DNS}/api/slow     # latency spike"
-echo "    curl http://${ALB_DNS}/api/error    # error span"
-echo "    curl http://${ALB_DNS}/api/burst    # 10 parallel child spans"
-echo "    curl http://${ALB_DNS}/api/fetch    # outbound HTTP (multi-service)"
+echo -e "  ${BOLD}Try these:${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/order${NC}  ${DIM}# happy path trace${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/slow${NC}   ${DIM}# latency spike${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/error${NC}  ${DIM}# error span${NC}"
+echo -e "  ${DIM}  ├─${NC} curl ${C}http://${ALB_DNS}/api/burst${NC}  ${DIM}# 10 parallel child spans${NC}"
+echo -e "  ${DIM}  └─${NC} curl ${C}http://${ALB_DNS}/api/fetch${NC}  ${DIM}# outbound HTTP${NC}"
 echo ""
-echo "  Fire a burst of mixed traffic:"
-echo "    ./scripts/fire.sh http://${ALB_DNS}"
+echo -e "  ${Y}Fire a burst:${NC}  ./scripts/fire.sh http://${ALB_DNS}"
+echo -e "  ${Y}Dash0:${NC}         https://app.dash0.com → Services → dash0-demo"
 echo ""
-echo "  Dash0: https://app.dash0.com → Services → dash0-demo"
-echo "    → Check trace attributes for aws.ecs.cluster.arn, aws.ecs.task.arn, etc."
+echo -e "  ${BOLD}Reference files:${NC}"
+echo -e "  ${DIM}  ├─${NC} output/task-definition-deployed.json  ${DIM}— exact task def${NC}"
+echo -e "  ${DIM}  ├─${NC} output/task-definition-template.json  ${DIM}— reusable template${NC}"
+echo -e "  ${DIM}  └─${NC} collector/otel-collector-config.yaml   ${DIM}— pipeline config${NC}"
 echo ""
-echo -e "  ${Y}Reference files (take these with you):${NC}"
-echo "    output/task-definition-deployed.json  — exact task def as deployed"
-echo "    output/task-definition-template.json  — reusable template with placeholders"
-echo "    collector/otel-collector-config.yaml   — collector pipeline config"
-echo ""
-echo "  Teardown: ./scripts/teardown.sh"
-echo "═══════════════════════════════════════════════════════════════"
+echo -e "  ${DIM}Teardown:${NC} ./scripts/teardown.sh"
+echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

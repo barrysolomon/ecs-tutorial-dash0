@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dash0 on AWS ECS — Logs + Distributed Tracing Setup</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ── Reset ── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+
+        /* ── Base ── */
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            color: #2d3748;
+            background: #f7f8fc;
+        }
+
+        /* ── Layout ── */
+        .page {
+            display: flex;
+            max-width: 1280px;
+            margin: 0 auto;
+            min-height: 100vh;
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: 260px;
+            flex-shrink: 0;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 32px 20px 32px 24px;
+            background: #ffffff;
+            border-right: 1px solid #e2e8f0;
+            z-index: 10;
+        }
+        .sidebar-logo {
+            font-size: 13px;
+            font-weight: 700;
+            color: #a0aec0;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            margin-bottom: 28px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #edf2f7;
+        }
+        .sidebar h4 {
+            font-size: 11px;
+            font-weight: 700;
+            color: #a0aec0;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 12px;
+            margin-top: 20px;
+        }
+        .sidebar h4:first-of-type { margin-top: 0; }
+        .sidebar ul { list-style: none; }
+        .sidebar li { margin-bottom: 2px; }
+        .sidebar a {
+            display: block;
+            padding: 5px 12px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #64748b;
+            text-decoration: none;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+        .sidebar a:hover {
+            color: #1e293b;
+            background: #f1f5f9;
+        }
+        .sidebar .indent { padding-left: 28px; font-size: 12px; color: #94a3b8; }
+        .sidebar .indent:hover { color: #475569; }
+
+        /* ── Main content ── */
+        .main {
+            flex: 1;
+            min-width: 0;
+            padding: 40px 56px 80px;
+            background: #ffffff;
+        }
+
+        /* ── Hero ── */
+        .hero {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+            padding: 52px 48px;
+            border-radius: 16px;
+            margin-bottom: 48px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero::after {
+            content: '';
+            position: absolute;
+            bottom: -30%;
+            left: -10%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(14,165,233,0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero h1 {
+            color: #ffffff;
+            font-size: 2.4em;
+            font-weight: 800;
+            margin: 0 0 10px;
+            letter-spacing: -0.5px;
+            position: relative;
+        }
+        .hero .subtitle {
+            color: #94a3b8;
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            position: relative;
+        }
+        .hero .meta-line {
+            color: #64748b;
+            font-size: 14px;
+            position: relative;
+        }
+        .hero .badge-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 18px;
+            position: relative;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .badge-blue { background: rgba(99,102,241,0.2); color: #a5b4fc; }
+        .badge-cyan { background: rgba(14,165,233,0.2); color: #7dd3fc; }
+        .badge-green { background: rgba(34,197,94,0.2); color: #86efac; }
+
+        /* ── Typography ── */
+        h2 {
+            font-size: 1.6em;
+            font-weight: 800;
+            color: #0f172a;
+            margin-top: 56px;
+            margin-bottom: 16px;
+            letter-spacing: -0.3px;
+            scroll-margin-top: 24px;
+        }
+        h3 {
+            font-size: 1.15em;
+            font-weight: 700;
+            color: #1e293b;
+            margin-top: 32px;
+            margin-bottom: 12px;
+            scroll-margin-top: 24px;
+        }
+        p { margin-bottom: 16px; }
+        strong { font-weight: 600; color: #1e293b; }
+        a { color: #6366f1; text-decoration: none; }
+        a:hover { color: #4f46e5; text-decoration: underline; }
+
+        /* ── Lists ── */
+        ul, ol { margin-left: 24px; margin-bottom: 16px; }
+        li { margin-bottom: 8px; }
+
+        /* ── Inline code ── */
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', monospace;
+            background: #f1f5f9;
+            color: #334155;
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-size: 0.85em;
+            border: 1px solid #e2e8f0;
+        }
+
+        /* ── Code blocks ── */
+        pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px 24px;
+            border-radius: 12px;
+            overflow-x: auto;
+            margin: 16px 0 20px;
+            font-family: 'JetBrains Mono', 'SF Mono', monospace;
+            font-size: 13px;
+            line-height: 1.65;
+            border: 1px solid #1e293b;
+        }
+        pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+            border: none;
+            border-radius: 0;
+            font-size: inherit;
+        }
+        .kw { color: #c4b5fd; }   /* keyword */
+        .fn { color: #93c5fd; }   /* function */
+        .st { color: #86efac; }   /* string */
+        .cm { color: #64748b; font-style: italic; }  /* comment */
+        .at { color: #7dd3fc; }   /* attribute / key */
+        .nu { color: #fbbf24; }   /* number */
+
+        /* ── Step cards ── */
+        .step {
+            margin-top: 56px;
+            scroll-margin-top: 24px;
+        }
+        .step-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 20px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #e2e8f0;
+            margin-bottom: 24px;
+        }
+        .step-num {
+            flex-shrink: 0;
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            font-weight: 800;
+            box-shadow: 0 4px 14px rgba(99,102,241,0.3);
+        }
+        .step-head h2 {
+            margin: 0;
+            font-size: 1.35em;
+        }
+        .step-head .step-sub {
+            color: #94a3b8;
+            font-size: 14px;
+            font-weight: 500;
+            margin-top: 4px;
+        }
+
+        /* ── Architecture diagram ── */
+        .arch {
+            background: linear-gradient(145deg, #f8fafc, #eef2ff);
+            padding: 40px 32px;
+            border-radius: 14px;
+            margin: 20px 0;
+            border: 1px solid #e0e7ff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+        }
+        .arch-box {
+            background: #ffffff;
+            border: 2px solid #6366f1;
+            border-radius: 10px;
+            padding: 12px 28px;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: center;
+            position: relative;
+            z-index: 1;
+        }
+        .arch-box.primary { background: #eef2ff; border-color: #6366f1; }
+        .arch-box.secondary { background: #f0fdf4; border-color: #22c55e; }
+        .arch-box.destination { background: #0f172a; border-color: #0f172a; color: #ffffff; }
+        .arch-box small {
+            display: block;
+            font-size: 11px;
+            font-weight: 500;
+            color: #94a3b8;
+            margin-top: 2px;
+        }
+        .arch-box.destination small { color: #64748b; }
+        .arch-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 4px 0;
+            color: #94a3b8;
+        }
+        .arch-arrow .arrow-line {
+            width: 2px;
+            height: 20px;
+            background: #cbd5e1;
+        }
+        .arch-arrow .arrow-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: #64748b;
+            padding: 2px 0;
+        }
+        .arch-arrow .arrow-head {
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 8px solid #cbd5e1;
+        }
+        .arch-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .arch-connector {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            color: #cbd5e1;
+        }
+        .arch-connector .conn-line {
+            width: 24px;
+            height: 2px;
+            background: #cbd5e1;
+        }
+        .arch-connector .conn-arrow {
+            width: 0;
+            height: 0;
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+            border-right: 8px solid #cbd5e1;
+        }
+
+        /* ── Tip callout ── */
+        .tip {
+            background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #22c55e;
+            padding: 16px 20px 16px 20px;
+            margin: 20px 0;
+            border-radius: 0 10px 10px 0;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #166534;
+        }
+        .tip-label {
+            font-weight: 700;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #16a34a;
+            margin-bottom: 4px;
+        }
+
+        /* ── Tables ── */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 20px 0;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        thead { background: #0f172a; color: #ffffff; }
+        th {
+            padding: 12px 18px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        td {
+            padding: 12px 18px;
+            border-bottom: 1px solid #f1f5f9;
+            vertical-align: top;
+        }
+        tbody tr:nth-child(even) { background: #f8fafc; }
+        tbody tr:hover { background: #f1f5f9; }
+
+        /* config-table: monospace first column */
+        .config-table td:first-child {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: #1e293b;
+            white-space: nowrap;
+        }
+
+        /* ── Endpoint grid ── */
+        .endpoints {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            margin: 16px 0;
+        }
+        .endpoint-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px 18px;
+            text-align: center;
+        }
+        .endpoint-card .region {
+            font-size: 12px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        .endpoint-card .url {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: #334155;
+        }
+
+        /* ── Prerequisites checklist ── */
+        .prereq-list {
+            list-style: none;
+            margin-left: 0;
+            padding: 0;
+        }
+        .prereq-list li {
+            padding: 10px 16px 10px 44px;
+            position: relative;
+            background: #f8fafc;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid #e2e8f0;
+            font-size: 15px;
+        }
+        .prereq-list li::before {
+            content: "\2713";
+            position: absolute;
+            left: 16px;
+            top: 10px;
+            color: #22c55e;
+            font-weight: 700;
+        }
+
+        /* ── Section divider ── */
+        .divider {
+            border: none;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #e2e8f0, transparent);
+            margin: 48px 0;
+        }
+
+        /* ── Footer ── */
+        .footer {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-top: 64px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 960px) {
+            .sidebar { display: none; }
+            .main { padding: 24px 20px 60px; }
+            .hero { padding: 36px 28px; }
+            .hero h1 { font-size: 1.8em; }
+            .endpoints { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-logo">Dash0 ECS Guide</div>
+            <h4>Getting Started</h4>
+            <ul>
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#prerequisites">Prerequisites</a></li>
+            </ul>
+            <h4>Setup Steps</h4>
+            <ul>
+                <li><a href="#step-1">1. Dash0 Org &amp; Token</a></li>
+                <li><a href="#step-1a" class="indent">Sign up / log in</a></li>
+                <li><a href="#step-1b" class="indent">Create auth token</a></li>
+                <li><a href="#step-1c" class="indent">Secrets Manager</a></li>
+                <li><a href="#step-1d" class="indent">OTLP endpoints</a></li>
+                <li><a href="#step-2">2. Instrument Your App</a></li>
+                <li><a href="#step-2a" class="indent">Auto-instrumentation</a></li>
+                <li><a href="#step-2b" class="indent">Direct OTLP export</a></li>
+                <li><a href="#step-3">3. OTel Collector Sidecar</a></li>
+                <li><a href="#step-3a" class="indent">Collector config</a></li>
+                <li><a href="#step-3b" class="indent">Task definition</a></li>
+                <li><a href="#step-4">4. Log Collection</a></li>
+                <li><a href="#step-5">5. Trace-Log Correlation</a></li>
+                <li><a href="#step-6">6. Deploy &amp; Verify</a></li>
+                <li><a href="#common-issues" class="indent">Common issues</a></li>
+            </ul>
+            <h4>Reference</h4>
+            <ul>
+                <li><a href="#env-cheatsheet">Env Vars Cheat Sheet</a></li>
+                <li><a href="#demo-flow">Demo Flow</a></li>
+            </ul>
+        </nav>
+
+        <!-- Main -->
+        <main class="main">
+            <!-- Hero -->
+            <div class="hero">
+                <h1>Dash0 on AWS ECS</h1>
+                <div class="subtitle">Logs + Distributed Tracing &mdash; Step-by-Step Setup</div>
+                <div class="meta-line">Practice guide &nbsp;&bull;&nbsp; Fargate &amp; EC2 launch types</div>
+                <div class="badge-row">
+                    <span class="badge badge-blue">ECS Fargate</span>
+                    <span class="badge badge-cyan">OpenTelemetry</span>
+                    <span class="badge badge-green">FireLens</span>
+                </div>
+            </div>
+
+            <!-- Overview -->
+            <section id="overview">
+                <h2>What you're setting up</h2>
+                <p>This guide walks through getting full observability on an ECS-hosted application: <strong>distributed traces</strong> (via OTel SDK) and <strong>logs</strong> (via FireLens / Fluent Bit), both flowing into Dash0 with trace-log correlation. It is written for Fargate but notes where EC2 differs.</p>
+
+                <p><strong>Architecture at a glance:</strong></p>
+                <div class="arch">
+                    <div class="arch-box primary">Your App Container</div>
+                    <div class="arch-arrow">
+                        <div class="arrow-line"></div>
+                        <div class="arrow-label">OTLP gRPC :4317</div>
+                        <div class="arrow-line"></div>
+                        <div class="arrow-head"></div>
+                    </div>
+                    <div class="arch-row">
+                        <div class="arch-box primary">OTel Collector Sidecar</div>
+                        <div class="arch-connector">
+                            <div class="conn-arrow"></div>
+                            <div class="conn-line"></div>
+                        </div>
+                        <div class="arch-box secondary">Fluent Bit<small>FireLens log router</small></div>
+                    </div>
+                    <div class="arch-arrow">
+                        <div class="arrow-line"></div>
+                        <div class="arrow-label">OTLP / gRPC</div>
+                        <div class="arrow-line"></div>
+                        <div class="arrow-head"></div>
+                    </div>
+                    <div class="arch-box destination">Dash0 Ingest Endpoint<small>api.&lt;region&gt;.aws.dash0.com:4317</small></div>
+                </div>
+
+                <div class="tip">
+                    <div class="tip-label">Tip</div>
+                    You can also export directly from the app to Dash0 (no collector sidecar). That is the simplest starting point if the customer just wants traces fast. Use the sidecar when they need log enrichment, PII scrubbing, or sampling control.
+                </div>
+            </section>
+
+            <!-- Prerequisites -->
+            <section id="prerequisites">
+                <h2>Prerequisites</h2>
+                <ul class="prereq-list">
+                    <li>AWS account with ECS cluster (Fargate or EC2 launch type)</li>
+                    <li>Docker image for a service you can redeploy</li>
+                    <li>Dash0 trial org &mdash; see Step 1</li>
+                    <li>AWS CLI configured locally (<code>aws sts get-caller-identity</code> should work)</li>
+                    <li>Basic familiarity with ECS task definitions (JSON or console)</li>
+                </ul>
+            </section>
+
+            <hr class="divider">
+
+            <!-- ═══ Step 1 ═══ -->
+            <section class="step" id="step-1">
+                <div class="step-head">
+                    <div class="step-num">1</div>
+                    <div>
+                        <h2>Create your Dash0 org and get an auth token</h2>
+                        <div class="step-sub">5 minutes &mdash; do this first, everything else depends on it</div>
+                    </div>
+                </div>
+
+                <h3 id="step-1a">1a &mdash; Sign up / log in</h3>
+                <ol>
+                    <li>Go to <a href="https://app.dash0.com">app.dash0.com</a> and sign up or log in</li>
+                    <li>Create a new Organisation (or use an existing trial org)</li>
+                    <li>Note the Organisation slug &mdash; you will need it for the OTLP endpoint URL</li>
+                </ol>
+
+                <h3 id="step-1b">1b &mdash; Create an auth token</h3>
+                <ol>
+                    <li>Organisation Settings &rarr; Auth Tokens &rarr; <strong>New Token</strong></li>
+                    <li>Name it something obvious: <code>ecs-onboarding</code></li>
+                    <li>Select <strong>All permissions</strong> (or at minimum <em>Ingest</em>)</li>
+                    <li>Copy the token &mdash; it is only shown once</li>
+                </ol>
+
+                <div class="tip">
+                    <div class="tip-label">Tip</div>
+                    Store the token in AWS Secrets Manager right now. You will reference it from the task definition as a secret, not a plain env var.
+                </div>
+
+                <h3 id="step-1c">1c &mdash; Store token in Secrets Manager</h3>
+<pre><code>aws secretsmanager create-secret \
+  --name dash0/auth-token \
+  --secret-string <span class="st">'auth_xxxxxxxxxxxxxxxxxxxx'</span></code></pre>
+
+                <h3 id="step-1d">1d &mdash; Know your OTLP endpoint</h3>
+                <p>Dash0 uses regional OTLP endpoints. For most EU/UK customers:</p>
+                <div class="endpoints">
+                    <div class="endpoint-card">
+                        <div class="region">EU (Ireland)</div>
+                        <div class="url">api.eu-west-1.aws.dash0.com:4317</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="region">US West</div>
+                        <div class="url">api.us-west-2.aws.dash0.com:4317</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="region">US East</div>
+                        <div class="url">api.us-east-2.aws.dash0.com:4317</div>
+                    </div>
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- ═══ Step 2 ═══ -->
+            <section class="step" id="step-2">
+                <div class="step-head">
+                    <div class="step-num">2</div>
+                    <div>
+                        <h2>Instrument your application</h2>
+                        <div class="step-sub">Add the OTel SDK &mdash; Node.js, Python, Java or Go</div>
+                    </div>
+                </div>
+
+                <h3 id="step-2a">Option A &mdash; Auto-instrumentation (Node.js)</h3>
+                <p>If the app is Node.js you can get traces with zero code changes using the OTel auto-instrumentation package:</p>
+<pre><code>npm install @opentelemetry/sdk-node \
+            @opentelemetry/auto-instrumentations-node \
+            @opentelemetry/exporter-trace-otlp-grpc</code></pre>
+
+                <p>Create <code>tracing.js</code> (loaded before anything else):</p>
+<pre><code><span class="kw">const</span> { <span class="fn">NodeSDK</span> } = <span class="fn">require</span>(<span class="st">'@opentelemetry/sdk-node'</span>);
+<span class="kw">const</span> { <span class="fn">getNodeAutoInstrumentations</span> } = <span class="fn">require</span>(<span class="st">'@opentelemetry/auto-instrumentations-node'</span>);
+<span class="kw">const</span> { <span class="fn">OTLPTraceExporter</span> } = <span class="fn">require</span>(<span class="st">'@opentelemetry/exporter-trace-otlp-grpc'</span>);
+
+<span class="kw">const</span> sdk = <span class="kw">new</span> <span class="fn">NodeSDK</span>({
+  traceExporter: <span class="kw">new</span> <span class="fn">OTLPTraceExporter</span>(),  <span class="cm">// reads OTEL_EXPORTER_OTLP_ENDPOINT</span>
+  instrumentations: [<span class="fn">getNodeAutoInstrumentations</span>()]
+});
+sdk.<span class="fn">start</span>();</code></pre>
+
+                <p>Start your app with:</p>
+<pre><code>node --require ./tracing.js server.js</code></pre>
+
+                <div class="tip">
+                    <div class="tip-label">Other languages</div>
+                    For Python use <code>opentelemetry-distro</code> + <code>opentelemetry-bootstrap</code>. For Java use the <code>-javaagent</code> flag with the OTel Java agent JAR. For Go, instrument manually using <code>go.opentelemetry.io/otel</code>.
+                </div>
+
+                <h3 id="step-2b">Option B &mdash; Direct OTLP export (no collector sidecar)</h3>
+                <p>Skip the sidecar entirely &mdash; set these env vars in the task definition and the app will send directly to Dash0:</p>
+
+                <div class="table-wrap">
+                    <table class="config-table">
+                        <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+                        <tbody>
+                            <tr><td>OTEL_EXPORTER_OTLP_ENDPOINT</td><td><code>https://api.eu-west-1.aws.dash0.com:4317</code></td></tr>
+                            <tr><td>OTEL_EXPORTER_OTLP_HEADERS</td><td><code>Authorization=Bearer &lt;your-token&gt;</code></td></tr>
+                            <tr><td>OTEL_SERVICE_NAME</td><td><code>your-service-name</code></td></tr>
+                            <tr><td>OTEL_RESOURCE_ATTRIBUTES</td><td><code>deployment.environment=production,team=platform</code></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="tip">
+                    <div class="tip-label">Tip</div>
+                    Direct export is the right starting point. Move to a sidecar collector when you need sampling, PII redaction, or want to decouple telemetry config from app deploys.
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- ═══ Step 3 ═══ -->
+            <section class="step" id="step-3">
+                <div class="step-head">
+                    <div class="step-num">3</div>
+                    <div>
+                        <h2>Add OTel Collector sidecar to your task definition</h2>
+                        <div class="step-sub">Skip if using Option B (direct export) above</div>
+                    </div>
+                </div>
+
+                <h3 id="step-3a">3a &mdash; Collector config file</h3>
+                <p>Store this as an SSM parameter or bake into a config image. Save as <code>otel-collector-config.yaml</code>:</p>
+<pre><code><span class="at">receivers:</span>
+  <span class="at">otlp:</span>
+    <span class="at">protocols:</span>
+      <span class="at">grpc:</span>          <span class="cm"># listens on :4317</span>
+      <span class="at">http:</span>          <span class="cm"># listens on :4318</span>
+
+<span class="at">processors:</span>
+  <span class="at">batch:</span>             <span class="cm"># buffer + batch before sending</span>
+    <span class="at">timeout:</span> 5s
+    <span class="at">send_batch_size:</span> <span class="nu">1000</span>
+  <span class="at">resource:</span>
+    <span class="at">attributes:</span>      <span class="cm"># add cluster metadata</span>
+      - <span class="at">action:</span> insert
+        <span class="at">key:</span> cloud.provider
+        <span class="at">value:</span> aws
+      - <span class="at">action:</span> insert
+        <span class="at">key:</span> cloud.platform
+        <span class="at">value:</span> aws_ecs
+
+<span class="at">exporters:</span>
+  <span class="at">otlp/dash0:</span>
+    <span class="at">endpoint:</span> api.eu-west-1.aws.dash0.com:4317
+    <span class="at">headers:</span>
+      <span class="at">Authorization:</span> <span class="st">'Bearer ${DASH0_AUTH_TOKEN}'</span>
+
+<span class="at">service:</span>
+  <span class="at">pipelines:</span>
+    <span class="at">traces:</span>
+      <span class="at">receivers:</span>  [otlp]
+      <span class="at">processors:</span> [resource, batch]
+      <span class="at">exporters:</span>  [otlp/dash0]
+    <span class="at">logs:</span>
+      <span class="at">receivers:</span>  [otlp]
+      <span class="at">processors:</span> [resource, batch]
+      <span class="at">exporters:</span>  [otlp/dash0]</code></pre>
+
+                <h3 id="step-3b">3b &mdash; Task definition &mdash; container definitions</h3>
+                <p>Add the collector as a sidecar alongside your app container:</p>
+<pre><code>{
+  <span class="st">"containerDefinitions"</span>: [
+    {
+      <span class="st">"name"</span>: <span class="st">"app"</span>,
+      <span class="st">"image"</span>: <span class="st">"your-ecr-image:latest"</span>,
+      <span class="st">"environment"</span>: [
+        { <span class="st">"name"</span>: <span class="st">"OTEL_EXPORTER_OTLP_ENDPOINT"</span>, <span class="st">"value"</span>: <span class="st">"http://localhost:4317"</span> },
+        { <span class="st">"name"</span>: <span class="st">"OTEL_SERVICE_NAME"</span>,            <span class="st">"value"</span>: <span class="st">"my-service"</span> },
+        { <span class="st">"name"</span>: <span class="st">"OTEL_RESOURCE_ATTRIBUTES"</span>,     <span class="st">"value"</span>: <span class="st">"deployment.environment=prod"</span> }
+      ]
+    },
+    {
+      <span class="st">"name"</span>: <span class="st">"otel-collector"</span>,
+      <span class="st">"image"</span>: <span class="st">"otel/opentelemetry-collector-contrib:latest"</span>,
+      <span class="st">"essential"</span>: <span class="kw">false</span>,
+      <span class="st">"command"</span>: [<span class="st">"--config=/etc/otel/config.yaml"</span>],
+      <span class="st">"secrets"</span>: [
+        { <span class="st">"name"</span>: <span class="st">"DASH0_AUTH_TOKEN"</span>,
+          <span class="st">"valueFrom"</span>: <span class="st">"arn:aws:secretsmanager:eu-west-1:ACCOUNT:secret:dash0/auth-token"</span> }
+      ],
+      <span class="st">"portMappings"</span>: [
+        { <span class="st">"containerPort"</span>: <span class="nu">4317</span>, <span class="st">"protocol"</span>: <span class="st">"tcp"</span> },
+        { <span class="st">"containerPort"</span>: <span class="nu">4318</span>, <span class="st">"protocol"</span>: <span class="st">"tcp"</span> }
+      ],
+      <span class="st">"mountPoints"</span>: [
+        { <span class="st">"sourceVolume"</span>: <span class="st">"otel-config"</span>, <span class="st">"containerPath"</span>: <span class="st">"/etc/otel"</span> }
+      ]
+    }
+  ]
+}</code></pre>
+
+                <div class="tip">
+                    <div class="tip-label">Tip</div>
+                    In Fargate, all containers in a task share a network namespace. <code>localhost:4317</code> in the app container reaches the collector sidecar directly &mdash; no service discovery needed.
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- ═══ Step 4 ═══ -->
+            <section class="step" id="step-4">
+                <div class="step-head">
+                    <div class="step-num">4</div>
+                    <div>
+                        <h2>Set up log collection with FireLens + Fluent Bit</h2>
+                        <div class="step-sub">How ECS captures stdout logs and routes them to Dash0</div>
+                    </div>
+                </div>
+
+                <h3>Why FireLens</h3>
+                <p>ECS Fargate does not have a node-level log agent like K8s DaemonSet. FireLens is AWS's log router &mdash; it wraps Fluent Bit as a sidecar and intercepts all container stdout/stderr. You configure it to forward to the OTel Collector (or directly to Dash0 via OTLP).</p>
+
+                <h3>4a &mdash; Add FireLens container to task definition</h3>
+<pre><code>{
+  <span class="st">"name"</span>: <span class="st">"log_router"</span>,
+  <span class="st">"image"</span>: <span class="st">"906394416424.dkr.ecr.eu-west-1.amazonaws.com/aws-for-fluent-bit:stable"</span>,
+  <span class="st">"essential"</span>: <span class="kw">true</span>,
+  <span class="st">"firelensConfiguration"</span>: {
+    <span class="st">"type"</span>: <span class="st">"fluentbit"</span>,
+    <span class="st">"options"</span>: { <span class="st">"enable-ecs-log-metadata"</span>: <span class="st">"true"</span> }
+  }
+}</code></pre>
+
+                <h3>4b &mdash; Point app container logs at FireLens</h3>
+                <p>In your app container definition, change <code>logConfiguration</code> to use the <code>awsfirelens</code> driver:</p>
+<pre><code><span class="st">"logConfiguration"</span>: {
+  <span class="st">"logDriver"</span>: <span class="st">"awsfirelens"</span>,
+  <span class="st">"options"</span>: {
+    <span class="st">"Name"</span>:   <span class="st">"forward"</span>,
+    <span class="st">"Host"</span>:   <span class="st">"localhost"</span>,
+    <span class="st">"Port"</span>:   <span class="st">"24224"</span>,
+    <span class="st">"Match"</span>:  <span class="st">"*"</span>
+  }
+}</code></pre>
+
+                <h3>4c &mdash; Fluent Bit output to OTel Collector</h3>
+                <p>Forward to the OTel Collector sidecar, which then sends to Dash0:</p>
+<pre><code>[OUTPUT]
+    Name          opentelemetry
+    Match         *
+    Host          127.0.0.1
+    Port          <span class="nu">4318</span>
+    logs_uri      /v1/logs
+    tls           off
+    header        Authorization Bearer ${DASH0_AUTH_TOKEN}</code></pre>
+
+                <div class="tip">
+                    <div class="tip-label">Tip</div>
+                    Fluent Bit's <code>opentelemetry</code> output plugin (available in aws-for-fluent-bit:stable) converts log records to OTLP format before sending. This is cleaner than using the HTTP output plugin.
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- ═══ Step 5 ═══ -->
+            <section class="step" id="step-5">
+                <div class="step-head">
+                    <div class="step-num">5</div>
+                    <div>
+                        <h2>Wire up trace-log correlation</h2>
+                        <div class="step-sub">Link every log line back to its parent trace</div>
+                    </div>
+                </div>
+
+                <p>For logs to link to traces in Dash0, each log line needs <code>trace_id</code> and <code>span_id</code> fields that match the active OTel span. There are two approaches:</p>
+
+                <h3>Option A &mdash; Inject trace context in the app (recommended)</h3>
+                <p>Use the OTel logging bridge in your logging library. Example for Node.js with Winston:</p>
+<pre><code><span class="kw">const</span> { context, trace } = <span class="fn">require</span>(<span class="st">'@opentelemetry/api'</span>);
+<span class="kw">const</span> winston = <span class="fn">require</span>(<span class="st">'winston'</span>);
+
+<span class="kw">const</span> logger = winston.<span class="fn">createLogger</span>({
+  format: winston.format.<span class="fn">combine</span>(
+    winston.<span class="fn">format</span>((info) =&gt; {
+      <span class="kw">const</span> span = trace.<span class="fn">getActiveSpan</span>();
+      <span class="kw">if</span> (span) {
+        <span class="kw">const</span> ctx = span.<span class="fn">spanContext</span>();
+        info.trace_id = ctx.traceId;
+        info.span_id  = ctx.spanId;
+      }
+      <span class="kw">return</span> info;
+    })(),
+    winston.format.<span class="fn">json</span>()
+  ),
+  transports: [<span class="kw">new</span> winston.transports.<span class="fn">Console</span>()]
+});</code></pre>
+
+                <p>Every log line emitted inside a traced request will contain <code>trace_id</code> and <code>span_id</code> as JSON fields. Dash0 auto-correlates these.</p>
+
+                <h3>Option B &mdash; OTel log appender (SDK-level)</h3>
+                <p>If using the OTel SDK log bridge, configure it as an additional log exporter in your SDK setup. This sends logs directly via OTLP with trace context already attached &mdash; no manual injection needed. Supported in Java (log4j2/logback), Python (logging bridge), and Node.js (experimental).</p>
+
+                <div class="tip">
+                    <div class="tip-label">Tip</div>
+                    Both options produce the same result in Dash0. Option A is more universally supported today across frameworks. Option B is cleaner long-term.
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- ═══ Step 6 ═══ -->
+            <section class="step" id="step-6">
+                <div class="step-head">
+                    <div class="step-num">6</div>
+                    <div>
+                        <h2>Deploy and verify</h2>
+                        <div class="step-sub">Confirm data is flowing into Dash0</div>
+                    </div>
+                </div>
+
+                <h3>6a &mdash; Deploy the updated task definition</h3>
+<pre><code><span class="cm"># Register new task definition revision</span>
+aws ecs register-task-definition --cli-input-json file://task-definition.json
+
+<span class="cm"># Update the service to use the new revision</span>
+aws ecs update-service \
+  --cluster your-cluster \
+  --service your-service \
+  --task-definition your-task-family:REVISION</code></pre>
+
+                <h3>6b &mdash; Check collector health</h3>
+<pre><code><span class="cm"># Exec into the collector sidecar</span>
+aws ecs execute-command \
+  --cluster your-cluster \
+  --task TASK_ID \
+  --container otel-collector \
+  --interactive \
+  --command <span class="st">'/bin/sh'</span>
+
+<span class="cm"># Inside the container:</span>
+curl http://localhost:13133/  <span class="cm"># health check endpoint</span></code></pre>
+
+                <h3>6c &mdash; Verify in Dash0</h3>
+                <ol>
+                    <li>Open <a href="https://app.dash0.com">app.dash0.com</a> &rarr; your organisation</li>
+                    <li>Go to <strong>Services</strong> &mdash; you should see your service within ~60 seconds of first traffic</li>
+                    <li>Click into the service &rarr; <strong>Traces</strong> tab to see spans</li>
+                    <li><strong>Logs</strong> tab &mdash; verify log records are appearing</li>
+                    <li>Click a trace &rarr; check for correlated log entries in the side panel</li>
+                </ol>
+
+                <h3 id="common-issues">6d &mdash; Common issues</h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>No data in Dash0</strong></td>
+                                <td>Check collector logs for auth errors. Token may be wrong or expired. Verify <code>DASH0_AUTH_TOKEN</code> secret is accessible to the task role.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Traces but no logs</strong></td>
+                                <td>Check FireLens is configured and the app <code>logDriver</code> is <code>awsfirelens</code>, not <code>awslogs</code>. Verify Fluent Bit output is pointed at correct port.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Logs but no trace correlation</strong></td>
+                                <td>App is not injecting <code>trace_id</code> / <code>span_id</code> into log records. Add the OTel trace context injection (Step 5).</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Collector exits immediately</strong></td>
+                                <td>Config YAML syntax error. Check CloudWatch logs for the otel-collector container. Common: missing <code>service.pipelines</code> block.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>403 from Dash0 endpoint</strong></td>
+                                <td>Auth token lacks Ingest permission, or wrong token format. Should be <code>Bearer auth_xxxxxxx</code> in the Authorization header.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Env Cheat Sheet -->
+            <section id="env-cheatsheet">
+                <h2>Quick reference &mdash; env vars cheat sheet</h2>
+                <div class="table-wrap">
+                    <table class="config-table">
+                        <thead><tr><th>Variable</th><th>Value / example</th></tr></thead>
+                        <tbody>
+                            <tr><td>OTEL_EXPORTER_OTLP_ENDPOINT</td><td><code>http://localhost:4317</code> (sidecar) or <code>https://api.eu-west-1.aws.dash0.com:4317</code> (direct)</td></tr>
+                            <tr><td>OTEL_EXPORTER_OTLP_HEADERS</td><td><code>Authorization=Bearer auth_xxxx</code> (direct export only)</td></tr>
+                            <tr><td>OTEL_SERVICE_NAME</td><td><code>my-service</code> (shows up in Dash0 service catalog)</td></tr>
+                            <tr><td>OTEL_RESOURCE_ATTRIBUTES</td><td><code>deployment.environment=production,team=platform</code></td></tr>
+                            <tr><td>OTEL_TRACES_EXPORTER</td><td><code>otlp</code> (default)</td></tr>
+                            <tr><td>OTEL_LOGS_EXPORTER</td><td><code>otlp</code> (if using SDK log bridge)</td></tr>
+                            <tr><td>OTEL_PROPAGATORS</td><td><code>tracecontext,baggage</code> (default &mdash; needed for trace-log correlation)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Demo Flow -->
+            <section id="demo-flow">
+                <h2>Demo walkthrough</h2>
+                <p>Suggested order for a live demo:</p>
+                <ol>
+                    <li>Show the service appearing in the Dash0 service catalog (RED metrics &mdash; rate, errors, duration)</li>
+                    <li>Drill into a trace &mdash; show the waterfall, span attributes, parent-child relationships</li>
+                    <li>From the trace, click into correlated logs &mdash; the key feature for ECS observability</li>
+                    <li>Show a log entry with <code>trace_id</code> / <code>span_id</code> and click it to jump back to the trace</li>
+                    <li>Pull up the Dash0 Logs view, filter by service name, search across all log fields</li>
+                </ol>
+
+                <div class="tip">
+                    <div class="tip-label">Framing</div>
+                    For teams migrating to ECS (from Elastic Beanstalk, EC2, or Lambda): "you get full observability from day one of the migration, no bolt-on required."
+                </div>
+            </section>
+
+            <div class="footer">Last updated: 2026-03-20</div>
+        </main>
+    </div>
+</body>
+</html>

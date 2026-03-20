@@ -10,15 +10,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="${SCRIPT_DIR}/.state"
 
 if [[ ! -f "${STATE_FILE}" ]]; then
-    echo "❌ .state file not found. Run setup.sh first, or delete resources manually."
+    echo -e "${R}  ✗ .state file not found. Run setup.sh first, or delete resources manually.${NC}"
     exit 1
 fi
 source "${STATE_FILE}"
 
-G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; NC='\033[0m'
-step() { echo -e "\n\033[0;34m▶ $1${NC}"; }
-ok()   { echo -e "${G}✓ $1${NC}"; }
-warn() { echo -e "${Y}⚠ $1${NC}"; }
+G='\033[0;32m'; Y='\033[1;33m'; B='\033[0;34m'; R='\033[0;31m'
+C='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+
+step() { echo -e "\n${B}▶ $1${NC}"; }
+ok()   { echo -e "${G}  ✓ $1${NC}"; }
+warn() { echo -e "${Y}  ⚠ $1${NC}"; }
 
 step "Scaling down ECS service"
 aws ecs update-service \
@@ -137,6 +139,6 @@ ok "Log group deleted"
 rm -f "${STATE_FILE}"
 
 echo ""
-echo "═══════════════════════════════════════════════════"
-echo -e "${G}  ✓ ALL RESOURCES DELETED${NC}"
-echo "═══════════════════════════════════════════════════"
+echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BOLD}${G}  ✓ ALL RESOURCES DELETED${NC}"
+echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

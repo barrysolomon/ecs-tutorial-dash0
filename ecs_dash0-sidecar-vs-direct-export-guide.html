@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECS Observability: Sidecar vs. Direct Export — Decision Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ── Reset ── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+
+        /* ── Base ── */
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            color: #2d3748;
+            background: #f7f8fc;
+        }
+
+        /* ── Layout ── */
+        .page { display: flex; max-width: 1280px; margin: 0 auto; min-height: 100vh; }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: 260px;
+            flex-shrink: 0;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 32px 20px 32px 24px;
+            background: #ffffff;
+            border-right: 1px solid #e2e8f0;
+            z-index: 10;
+        }
+        .sidebar-logo {
+            font-size: 13px;
+            font-weight: 700;
+            color: #a0aec0;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            margin-bottom: 28px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #edf2f7;
+        }
+        .sidebar h4 {
+            font-size: 11px;
+            font-weight: 700;
+            color: #a0aec0;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 12px;
+            margin-top: 20px;
+        }
+        .sidebar h4:first-of-type { margin-top: 0; }
+        .sidebar ul { list-style: none; }
+        .sidebar li { margin-bottom: 2px; }
+        .sidebar a {
+            display: block;
+            padding: 5px 12px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #64748b;
+            text-decoration: none;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+        .sidebar a:hover { color: #1e293b; background: #f1f5f9; }
+        .sidebar .indent { padding-left: 28px; font-size: 12px; color: #94a3b8; }
+        .sidebar .indent:hover { color: #475569; }
+
+        /* ── Main ── */
+        .main {
+            flex: 1;
+            min-width: 0;
+            padding: 40px 56px 80px;
+            background: #ffffff;
+        }
+
+        /* ── Hero ── */
+        .hero {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+            padding: 52px 48px;
+            border-radius: 16px;
+            margin-bottom: 48px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(245,158,11,0.12) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero::after {
+            content: '';
+            position: absolute;
+            bottom: -30%;
+            left: -10%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(99,102,241,0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero h1 {
+            color: #ffffff;
+            font-size: 2.2em;
+            font-weight: 800;
+            margin: 0 0 10px;
+            letter-spacing: -0.5px;
+            position: relative;
+        }
+        .hero .subtitle { color: #94a3b8; font-size: 18px; font-weight: 500; position: relative; }
+        .hero .badge-row { display: flex; gap: 8px; margin-top: 18px; position: relative; flex-wrap: wrap; }
+        .badge {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .badge-blue { background: rgba(99,102,241,0.2); color: #a5b4fc; }
+        .badge-cyan { background: rgba(14,165,233,0.2); color: #7dd3fc; }
+        .badge-amber { background: rgba(245,158,11,0.2); color: #fcd34d; }
+        .badge-green { background: rgba(34,197,94,0.2); color: #86efac; }
+
+        /* ── Typography ── */
+        h2 {
+            font-size: 1.6em;
+            font-weight: 800;
+            color: #0f172a;
+            margin-top: 56px;
+            margin-bottom: 16px;
+            letter-spacing: -0.3px;
+            scroll-margin-top: 24px;
+        }
+        h3 {
+            font-size: 1.15em;
+            font-weight: 700;
+            color: #1e293b;
+            margin-top: 32px;
+            margin-bottom: 12px;
+            scroll-margin-top: 24px;
+        }
+        h4 { font-size: 1em; font-weight: 700; color: #1e293b; margin-top: 24px; margin-bottom: 10px; }
+        p { margin-bottom: 16px; }
+        strong { font-weight: 600; color: #1e293b; }
+        em { font-style: italic; }
+        a { color: #6366f1; text-decoration: none; }
+        a:hover { color: #4f46e5; text-decoration: underline; }
+
+        /* ── Lists ── */
+        ul, ol { margin-left: 24px; margin-bottom: 16px; }
+        li { margin-bottom: 8px; }
+
+        /* ── Inline code ── */
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', monospace;
+            background: #f1f5f9;
+            color: #334155;
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-size: 0.85em;
+            border: 1px solid #e2e8f0;
+        }
+
+        /* ── Code blocks ── */
+        pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px 24px;
+            border-radius: 12px;
+            overflow-x: auto;
+            margin: 16px 0 20px;
+            font-family: 'JetBrains Mono', 'SF Mono', monospace;
+            font-size: 13px;
+            line-height: 1.65;
+            border: 1px solid #1e293b;
+        }
+        pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+            border: none;
+            border-radius: 0;
+            font-size: inherit;
+        }
+
+        /* ── Tables ── */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 20px 0;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        thead { background: #0f172a; color: #ffffff; }
+        th {
+            padding: 12px 18px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        td { padding: 12px 18px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+        tbody tr:nth-child(even) { background: #f8fafc; }
+        tbody tr:hover { background: #f1f5f9; }
+
+        /* ── Tip / Note callouts ── */
+        .tip {
+            background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #22c55e;
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-radius: 0 10px 10px 0;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #166534;
+        }
+        .note {
+            background: linear-gradient(135deg, #eff6ff, #eef2ff);
+            border: 1px solid #bfdbfe;
+            border-left: 4px solid #6366f1;
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-radius: 0 10px 10px 0;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #1e3a5f;
+        }
+        .callout-label {
+            font-weight: 700;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 4px;
+        }
+        .tip .callout-label { color: #16a34a; }
+        .note .callout-label { color: #6366f1; }
+
+        /* ── Architecture diagrams ── */
+        .arch {
+            background: linear-gradient(145deg, #f8fafc, #eef2ff);
+            padding: 40px 32px;
+            border-radius: 14px;
+            margin: 20px 0;
+            border: 1px solid #e0e7ff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+        }
+        .arch-box {
+            background: #ffffff;
+            border: 2px solid #6366f1;
+            border-radius: 10px;
+            padding: 12px 28px;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: center;
+            position: relative;
+            z-index: 1;
+        }
+        .arch-box.primary { background: #eef2ff; border-color: #6366f1; }
+        .arch-box.secondary { background: #f0fdf4; border-color: #22c55e; }
+        .arch-box.destination { background: #0f172a; border-color: #0f172a; color: #ffffff; }
+        .arch-box.task-boundary {
+            background: transparent;
+            border: 2px dashed #cbd5e1;
+            border-radius: 14px;
+            padding: 24px;
+            width: 100%;
+            max-width: 500px;
+        }
+        .arch-box small { display: block; font-size: 11px; font-weight: 500; color: #94a3b8; margin-top: 2px; }
+        .arch-box.destination small { color: #64748b; }
+        .arch-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 4px 0;
+            color: #94a3b8;
+        }
+        .arch-arrow .arrow-line { width: 2px; height: 20px; background: #cbd5e1; }
+        .arch-arrow .arrow-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: #64748b;
+            padding: 2px 0;
+        }
+        .arch-arrow .arrow-head {
+            width: 0; height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 8px solid #cbd5e1;
+        }
+        .arch-arrow-right {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            padding: 0 8px;
+        }
+        .arch-arrow-right .arrow-line-h { width: 32px; height: 2px; background: #cbd5e1; }
+        .arch-arrow-right .arrow-head-r {
+            width: 0; height: 0;
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+            border-left: 8px solid #cbd5e1;
+        }
+        .arch-arrow-right .arrow-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: #64748b;
+            padding: 0 6px;
+        }
+        .arch-row { display: flex; align-items: center; gap: 0; flex-wrap: wrap; justify-content: center; }
+        .arch-task-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 16px;
+            align-self: flex-start;
+        }
+        .arch-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+        }
+
+        /* ── Pros/Cons cards ── */
+        .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+        .pros-card, .cons-card {
+            border-radius: 12px;
+            padding: 20px;
+            font-size: 14px;
+        }
+        .pros-card {
+            background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+            border: 1px solid #bbf7d0;
+        }
+        .cons-card {
+            background: linear-gradient(135deg, #fef2f2, #fff1f2);
+            border: 1px solid #fecdd3;
+        }
+        .pros-card h4 { color: #16a34a; margin-top: 0; margin-bottom: 10px; }
+        .cons-card h4 { color: #dc2626; margin-top: 0; margin-bottom: 10px; }
+        .pros-card ul, .cons-card ul { margin-left: 18px; margin-bottom: 0; }
+        .pros-card li, .cons-card li { margin-bottom: 6px; font-size: 13px; line-height: 1.55; }
+
+        /* ── Graduation path ── */
+        .grad-path {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            margin: 24px 0;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .grad-step {
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            border-radius: 10px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #4338ca;
+            text-align: center;
+            min-width: 180px;
+        }
+        .grad-arrow {
+            font-size: 20px;
+            color: #c7d2fe;
+            padding: 0 8px;
+        }
+
+        /* ── Divider ── */
+        .divider {
+            border: none;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #e2e8f0, transparent);
+            margin: 48px 0;
+        }
+
+        /* ── Footer ── */
+        .footer {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-top: 64px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 960px) {
+            .sidebar { display: none; }
+            .main { padding: 24px 20px 60px; }
+            .hero { padding: 36px 28px; }
+            .hero h1 { font-size: 1.8em; }
+            .pros-cons { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-logo">Dash0 Decision Guide</div>
+            <h4>Overview</h4>
+            <ul>
+                <li><a href="#tldr">TL;DR</a></li>
+                <li><a href="#context">Context</a></li>
+            </ul>
+            <h4>Patterns</h4>
+            <ul>
+                <li><a href="#patterns">The Two Patterns</a></li>
+                <li><a href="#direct-export" class="indent">Direct OTLP Export</a></li>
+                <li><a href="#sidecar-collector" class="indent">Collector Sidecar</a></li>
+            </ul>
+            <h4>Deep Dives</h4>
+            <ul>
+                <li><a href="#choosing-collector">Choosing a Collector Image</a></li>
+                <li><a href="#configure-collector">Configuring the Pipeline</a></li>
+                <li><a href="#resource-overhead">Resource Overhead</a></li>
+            </ul>
+            <h4>Decisions</h4>
+            <ul>
+                <li><a href="#decision-framework">Decision Framework</a></li>
+                <li><a href="#demo-tips">Demo Tips</a></li>
+                <li><a href="#log-shipping">Log Shipping Options</a></li>
+                <li><a href="#references">References</a></li>
+            </ul>
+        </nav>
+
+        <!-- Main -->
+        <main class="main">
+            <!-- Hero -->
+            <div class="hero">
+                <h1>Sidecar vs. Direct Export</h1>
+                <div class="subtitle">ECS Observability Decision Guide</div>
+                <div class="badge-row">
+                    <span class="badge badge-blue">Architecture</span>
+                    <span class="badge badge-cyan">ECS / Fargate</span>
+                    <span class="badge badge-amber">Decision Guide</span>
+                    <span class="badge badge-green">OTel Collector</span>
+                </div>
+            </div>
+
+            <!-- TL;DR -->
+            <section id="tldr">
+                <h2>TL;DR</h2>
+                <p>Direct OTLP export sends telemetry straight from the app SDK to Dash0 &mdash; zero infrastructure, 5-minute setup, perfect for getting started and demos. An OTel Collector sidecar sits between the app and Dash0 and adds automatic infrastructure metadata (task ARN, cluster, AZ), batching, filtering, PII redaction, retry buffering, and log enrichment.</p>
+
+                <div class="grad-path">
+                    <div class="grad-step">Start with direct export</div>
+                    <div class="grad-arrow">&rarr;</div>
+                    <div class="grad-step">Validate in Dash0</div>
+                    <div class="grad-arrow">&rarr;</div>
+                    <div class="grad-step">Add sidecar for production</div>
+                </div>
+            </section>
+
+            <!-- Context -->
+            <section id="context">
+                <h2>Context</h2>
+                <p>This comes up in every ECS prospect conversation. Customers migrating to ECS (especially from Elastic Beanstalk, EC2, or Lambda) want to know the simplest path to observability &mdash; but also need to understand the production-grade architecture. The typical SA recommendation is the sidecar approach; the Dash0 ECS demo uses direct export for simplicity. Both are valid. The question is: what does the sidecar actually <em>give</em> you?</p>
+            </section>
+
+            <hr class="divider">
+
+            <!-- The Two Patterns -->
+            <section id="patterns">
+                <h2>The Two Patterns</h2>
+
+                <!-- Pattern 1: Direct Export -->
+                <section id="direct-export">
+                    <h3>Pattern 1: Direct OTLP Export (No Collector)</h3>
+
+                    <div class="arch">
+                        <div class="arch-task-label">ECS Task</div>
+                        <div class="arch-row">
+                            <div class="arch-box primary">App Container<small>OTel SDK inside</small></div>
+                            <div class="arch-arrow-right">
+                                <div class="arrow-line-h"></div>
+                                <div class="arrow-label">OTLP gRPC</div>
+                                <div class="arrow-line-h"></div>
+                                <div class="arrow-head-r"></div>
+                            </div>
+                            <div class="arch-box destination">Dash0<small>OTLP endpoint</small></div>
+                        </div>
+                    </div>
+
+                    <p>The app's OTel SDK exports directly to Dash0's OTLP endpoint. Configuration is entirely via environment variables in the ECS task definition:</p>
+                    <ul>
+                        <li><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> = <code>https://api.&lt;region&gt;.aws.dash0.com:4317</code></li>
+                        <li><code>OTEL_EXPORTER_OTLP_HEADERS</code> = <code>Authorization=Bearer auth_xxx</code> (via Secrets Manager)</li>
+                        <li><code>OTEL_SERVICE_NAME</code>, <code>OTEL_RESOURCE_ATTRIBUTES</code>, etc.</li>
+                    </ul>
+
+                    <div class="pros-cons">
+                        <div class="pros-card">
+                            <h4>Pros</h4>
+                            <ul>
+                                <li>Zero additional infrastructure</li>
+                                <li>One container per task</li>
+                                <li>Fast to set up (5 min)</li>
+                                <li>Easy to reason about</li>
+                            </ul>
+                        </div>
+                        <div class="cons-card">
+                            <h4>Cons</h4>
+                            <ul>
+                                <li>No automatic ECS metadata enrichment &mdash; you manually set <code>OTEL_RESOURCE_ATTRIBUTES</code> in the task definition, but these are static across all instances</li>
+                                <li>No filtering, batching, or transformation outside the SDK. Every container makes its own outbound HTTPS connections.</li>
+                                <li>Retry/buffering limited to what the SDK provides &mdash; under transient failures, threads block waiting for retries</li>
+                                <li>No PII redaction before data leaves the VPC &mdash; sensitive attributes must be scrubbed in application code</li>
+                                <li>No log enrichment from infrastructure logs (CloudWatch, FireLens) &mdash; correlation between app logs and structured logs gets lost</li>
+                                <li>At scale (50+ tasks), each task opens its own HTTPS connection to Dash0 &mdash; inefficient and harder to rate-limit</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Pattern 2: Sidecar -->
+                <section id="sidecar-collector">
+                    <h3>Pattern 2: OTel Collector Sidecar</h3>
+
+                    <div class="arch">
+                        <div class="arch-task-label">ECS Task</div>
+                        <div class="arch-row">
+                            <div class="arch-box primary">App Container<small>OTel SDK</small></div>
+                            <div class="arch-arrow-right">
+                                <div class="arrow-line-h"></div>
+                                <div class="arrow-label">localhost:4317</div>
+                                <div class="arrow-line-h"></div>
+                                <div class="arrow-head-r"></div>
+                            </div>
+                            <div class="arch-box primary">Collector Sidecar<small>process &amp; enrich</small></div>
+                            <div class="arch-arrow-right">
+                                <div class="arrow-line-h"></div>
+                                <div class="arrow-label">OTLP gRPC</div>
+                                <div class="arrow-line-h"></div>
+                                <div class="arrow-head-r"></div>
+                            </div>
+                            <div class="arch-box destination">Dash0<small>OTLP endpoint</small></div>
+                        </div>
+                    </div>
+
+                    <p>The app's OTel SDK exports to <code>localhost:4317</code> (the collector sidecar within the same task). The collector processes and forwards to Dash0.</p>
+
+                    <div class="pros-cons">
+                        <div class="pros-card">
+                            <h4>Pros</h4>
+                            <ul>
+                                <li>Automatic ECS metadata enrichment &mdash; the <code>resourcedetection</code> processor queries the Task Metadata Endpoint and stamps every signal with cluster ARN, task ARN, AZ, container ID, etc. This happens dynamically per instance, not statically.</li>
+                                <li>Full pipeline control &mdash; enrichment, filtering, batching, transformation, PII redaction, and retry all in one place</li>
+                                <li>Single outbound connection per task &mdash; the collector manages auth to Dash0, reducing per-container overhead</li>
+                                <li>Decouples app from Dash0's backend &mdash; app doesn't know about or depend on Dash0's endpoint; the collector can switch backends without redeploying</li>
+                            </ul>
+                        </div>
+                        <div class="cons-card">
+                            <h4>Cons</h4>
+                            <ul>
+                                <li><strong>Additional memory &amp; CPU per task.</strong> Typical: 128&ndash;512 MB / 0.25 vCPU per collector &mdash; cost is per task</li>
+                                <li><strong>Increased Fargate cost.</strong> Fargate bills on task-level CPU+memory; bumping from 512/1024 to 1024/2048 roughly doubles the compute cost per task. For a single service in a POC this might be $7&ndash;15/month, but for a production fleet of 50 tasks, this becomes $350&ndash;750/month.</li>
+                                <li><strong>More config to manage.</strong> Collector YAML is another artifact to version, deploy, and debug</li>
+                                <li><strong>Another moving part to monitor.</strong> Collector can fail, OOM, or drop data under pressure. The <code>health_check</code> extension helps, but it's still one more thing.</li>
+                                <li><strong>Startup dependency.</strong> App depends on collector being healthy first (via ECS <code>dependsOn</code>). If the collector fails to start, the app won't start either. This is usually the right behavior, but adds a failure mode.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Choosing a Collector Image -->
+            <section id="choosing-collector">
+                <h2>Choosing a Collector Image</h2>
+                <p>Not all collector images are the same. The choice affects what processors are available, image size, and support posture.</p>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Image</th><th>Size</th><th>Key Processors</th><th>Best For</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>otel/opentelemetry-collector-contrib</code></td>
+                                <td>~250 MB</td>
+                                <td>All &mdash; resourcedetection, filter, transform, k8sattributes, etc.</td>
+                                <td>Demos, POCs, and when you need specific contrib processors</td>
+                            </tr>
+                            <tr>
+                                <td><code>otel/opentelemetry-collector</code></td>
+                                <td>~60 MB</td>
+                                <td>Core only &mdash; batch, memory_limiter, attributes. No resourcedetection.</td>
+                                <td>Minimal footprint, but lacks ECS enrichment</td>
+                            </tr>
+                            <tr>
+                                <td>AWS ADOT Collector (<code>public.ecr.aws/aws-observability/aws-otel-collector</code>)</td>
+                                <td>~150 MB</td>
+                                <td>AWS-curated subset. Includes resourcedetection (ECS/EC2), batch, memory_limiter. Supports <code>AOT_CONFIG_CONTENT</code>.</td>
+                                <td>AWS-native shops wanting AWS-supported images</td>
+                            </tr>
+                            <tr>
+                                <td>Dash0 OTel Collector (<code>ghcr.io/dash0hq/collector</code>)</td>
+                                <td>~120 MB</td>
+                                <td>Curated for Dash0 &mdash; resourcedetection, batch, filter, transform, memory_limiter.</td>
+                                <td>Dash0 customers wanting a smaller image. Check availability for ECS (primarily K8s-focused today).</td>
+                            </tr>
+                            <tr>
+                                <td>Custom-built (via <code>ocb</code>)</td>
+                                <td>Variable</td>
+                                <td>Exactly what you need, nothing more.</td>
+                                <td>Production at scale &mdash; minimal image size and attack surface</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h4>Recommendation by scenario:</h4>
+                <ul>
+                    <li><strong>Demo / POC:</strong> Use <code>otel/opentelemetry-collector-contrib</code>. Has everything, well-documented.</li>
+                    <li><strong>Production (AWS-native):</strong> ADOT Collector &mdash; AWS-supported, on ECR (no Docker Hub rate limits), <code>AOT_CONFIG_CONTENT</code> makes config injection clean.</li>
+                    <li><strong>Production (minimal footprint):</strong> Custom collector via <code>ocb</code> with only what you use.</li>
+                </ul>
+
+                <div class="note">
+                    <div class="callout-label">Why not the core collector?</div>
+                    The core image doesn't include <code>resourcedetection</code>, <code>filter</code>, or <code>transform</code>. Without resourcedetection you lose automatic ECS metadata enrichment &mdash; which is half the reason to run a sidecar.
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Configuring the Collector Pipeline -->
+            <section id="configure-collector">
+                <h2>How to Configure the Collector Pipeline</h2>
+                <p>The collector's behavior is defined in a single YAML config. On ECS Fargate, there are four ways to get this config into the sidecar:</p>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Method</th><th>How It Works</th><th>Change Workflow</th><th>Best For</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Environment variable</strong></td>
+                                <td>Full YAML as env var. Collector reads via <code>--config=env:OTEL_COLLECTOR_CONFIG</code>.</td>
+                                <td>Edit task definition &rarr; register new revision &rarr; rolling deploy.</td>
+                                <td>Demos, POCs, small teams</td>
+                            </tr>
+                            <tr>
+                                <td><strong><code>AOT_CONFIG_CONTENT</code></strong></td>
+                                <td>ADOT Collector's native env var. Same approach.</td>
+                                <td>Same as above.</td>
+                                <td>AWS-native shops using ADOT</td>
+                            </tr>
+                            <tr>
+                                <td><strong>SSM Parameter Store</strong></td>
+                                <td>YAML in SSM. Startup script fetches it at boot.</td>
+                                <td>Update SSM &rarr; redeploy tasks. Config decoupled from task definition.</td>
+                                <td>Production &mdash; versioning and audit trail via SSM</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Baked into image</strong></td>
+                                <td><code>COPY otel-config.yaml /etc/otelcol/config.yaml</code> at build time.</td>
+                                <td>Edit YAML &rarr; rebuild &rarr; push to ECR &rarr; rolling deploy.</td>
+                                <td>Production at scale &mdash; immutable config per image tag</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Resource Overhead -->
+            <section id="resource-overhead">
+                <h2>Resource Overhead: Real Numbers</h2>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Configuration</th><th>Task CPU</th><th>Task Memory</th><th>Collector Share</th><th>Monthly Cost (1 task)</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Direct export (no sidecar)</td>
+                                <td>512 (0.5 vCPU)</td>
+                                <td>1024 MB</td>
+                                <td>0%</td>
+                                <td>~$15</td>
+                            </tr>
+                            <tr>
+                                <td>Sidecar (demo sizing)</td>
+                                <td>1024 (1 vCPU)</td>
+                                <td>2048 MB</td>
+                                <td>25% CPU / 25% RAM</td>
+                                <td>~$30</td>
+                            </tr>
+                            <tr>
+                                <td>Sidecar (tight production)</td>
+                                <td>768 (0.75 vCPU)</td>
+                                <td>1536 MB</td>
+                                <td>17% CPU / 17% RAM</td>
+                                <td>~$22</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p><em>Costs are approximate, 24/7 on-demand, single task in eu-west-1. Multiply by task count for fleet cost.</em></p>
+
+                <div class="tip">
+                    <div class="callout-label">Tip</div>
+                    The overhead is real but modest. For most services, the observability value (faster debugging, proactive alerting, SLO tracking) far outweighs the ~$7&ndash;15/month/task collector cost. Frame it as: "Would you rather pay $15/month extra per service, or spend 4 hours debugging a production incident blind?"
+                </div>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Decision Framework -->
+            <section id="decision-framework">
+                <h2>Decision Framework</h2>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Scenario</th><th>Recommendation</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Demo, POC, getting started</td>
+                                <td><strong>Direct export.</strong> Ship in 5 minutes, no extra infra, no extra cost.</td>
+                            </tr>
+                            <tr>
+                                <td>Single service, low traffic (&lt;100 rps)</td>
+                                <td><strong>Direct export</strong> is fine. Add sidecar later if needed.</td>
+                            </tr>
+                            <tr>
+                                <td>Multiple services, production</td>
+                                <td><strong>Sidecar collector.</strong> You need metadata, filtering, and batching. Budget ~$7&ndash;15/month/task.</td>
+                            </tr>
+                            <tr>
+                                <td>Regulated industry (fintech, health)</td>
+                                <td><strong>Sidecar collector.</strong> PII redaction before data leaves the VPC is likely a hard requirement. The overhead cost is negligible vs. compliance risk.</td>
+                            </tr>
+                            <tr>
+                                <td>High cardinality / high traffic (&gt;1000 rps)</td>
+                                <td><strong>Sidecar collector.</strong> Batching and memory limiting prevent telemetry from becoming a scaling bottleneck. May need to bump collector memory allocation beyond 512 MB.</td>
+                            </tr>
+                            <tr>
+                                <td>Need log/trace correlation from container logs</td>
+                                <td><strong>Sidecar collector.</strong> Needed to enrich and correlate logs not from the OTel SDK.</td>
+                            </tr>
+                            <tr>
+                                <td>Already using FireLens or fluent-bit</td>
+                                <td><strong>Sidecar collector.</strong> Pipe fluent-bit output through the collector for OTLP conversion and enrichment.</td>
+                            </tr>
+                            <tr>
+                                <td>Cost-sensitive, large fleet (50+ tasks)</td>
+                                <td><strong>Consider a central collector</strong> (shared ECS service behind an ALB) instead of per-task sidecars. Reduces total collector instances from N to 2&ndash;3, at the cost of an extra network hop and more complex scaling.</td>
+                            </tr>
+                            <tr>
+                                <td>Large fleet + needs per-task metadata</td>
+                                <td><strong>Sidecar with tight sizing.</strong> Use 128 MB / 0.25 vCPU per collector. Build a custom image with <code>ocb</code> to minimize startup time and memory footprint.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="grad-path">
+                    <div class="grad-step">Direct Export</div>
+                    <div class="grad-arrow">&rarr;</div>
+                    <div class="grad-step">Validate in Dash0</div>
+                    <div class="grad-arrow">&rarr;</div>
+                    <div class="grad-step">Add Sidecar Collector</div>
+                </div>
+                <p style="text-align:center; color:#64748b; font-size:14px;">Start simple, graduate when moving to production.</p>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Demo Tips -->
+            <section id="demo-tips">
+                <h2>Demo Tips</h2>
+                <ul>
+                    <li><strong>For a quick demo</strong> &mdash; use direct export. It deploys in 4 minutes and shows traces + logs immediately.</li>
+                    <li><strong>To show the sidecar value</strong> &mdash; point out the static <code>OTEL_RESOURCE_ATTRIBUTES</code> in the task definition: "Right now we're hardcoding <code>cloud.provider=aws</code>. With a collector sidecar, the <code>resourcedetection</code> processor fills in cluster ARN, task ARN, AZ, and container ID automatically &mdash; per running instance."</li>
+                    <li><strong>For "why not just CloudWatch?"</strong> &mdash; the collector gives a single pipeline for traces, logs, and metrics to one backend. CloudWatch + X-Ray = two systems, two UIs, manual correlation.</li>
+                    <li><strong>Don't lead with the sidecar</strong> in early conversations. It adds perceived complexity. Lead with "5 env vars, done." Introduce the collector as the production upgrade.</li>
+                </ul>
+            </section>
+
+            <hr class="divider">
+
+            <!-- Log Shipping Options -->
+            <section id="log-shipping">
+                <h2>Three Options for ECS Log Shipping</h2>
+                <ol>
+                    <li><strong>Direct OTLP export from the app</strong> &mdash; the app's OTel SDK exports logs directly. Simplest. Good for getting started.</li>
+                    <li><strong>FireLens + fluent-bit sidecar</strong> &mdash; AWS-managed log routing. Use the latest fluent-bit image (not the AWS-provided one, which lacks OTLP export).</li>
+                    <li><strong>CloudWatch logs &rarr; Dash0 integration</strong> &mdash; zero change to the ECS task. Just enable the Dash0 CloudWatch-for-logs integration. Lowest effort but adds latency and loses some structured metadata.</li>
+                </ol>
+            </section>
+
+            <hr class="divider">
+
+            <!-- References -->
+            <section id="references">
+                <h2>References</h2>
+                <ul>
+                    <li><a href="https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/resourcedetectionprocessor/README.md">OTel Collector resourcedetection processor &mdash; ECS detector</a></li>
+                    <li><a href="https://dash0.com/docs/dash0/monitoring/resources/recognize-common-resource-fragmentation-scenarios">Dash0: Resource Fragmentation Scenarios</a></li>
+                    <li><a href="https://dash0.com/guides/opentelemetry-batch-processor">Dash0: Batch Processor Guide</a></li>
+                    <li><a href="https://dash0.com/guides/opentelemetry-resource-processor">Dash0: Resource Processor Guide</a></li>
+                    <li><a href="https://opentelemetry.io/docs/collector/scaling/">OTel Collector Scaling Guide</a></li>
+                    <li><a href="https://opentelemetry.io/docs/collector/resiliency/">OTel Collector Resiliency</a></li>
+                </ul>
+            </section>
+
+            <div class="footer">Last updated: 2026-03-20</div>
+        </main>
+    </div>
+</body>
+</html>
