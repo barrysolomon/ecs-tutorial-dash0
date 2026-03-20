@@ -1,0 +1,6 @@
+.env
+scripts/.state
+node_modules/
+output/task-definition-deployed.json
+.claude/
+CLAUDE.md

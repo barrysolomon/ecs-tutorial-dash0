@@ -1,0 +1,95 @@
+# =============================================================================
+# OTel Collector Sidecar Config — Dash0 ECS Demo
+#
+# This config runs as a sidecar container in the same ECS task as the app.
+# The app exports to localhost:4317 → the collector enriches, batches,
+# filters, and forwards to Dash0.
+#
+# Injected at runtime via OTEL_COLLECTOR_CONFIG env var.
+# This file is for human reference only.
+# =============================================================================
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  zpages:
+    endpoint: 0.0.0.0:55679         # browser UI: http://localhost:55679/debug/tracez
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # ── ECS metadata enrichment ────────────────────────────────────────────────
+  # Queries the Task Metadata Endpoint (TMDE v4) to stamp every signal with:
+  #   aws.ecs.cluster.arn, aws.ecs.task.arn, aws.ecs.task.family,
+  #   aws.ecs.task.revision, aws.ecs.launchtype, aws.ecs.container.arn,
+  #   cloud.provider, cloud.platform, cloud.region, cloud.account.id,
+  #   cloud.availability_zone, container.name, container.id
+  resourcedetection:
+    detectors: [env, ecs, ec2]
+    timeout: 5s
+    override: false    # don't overwrite attributes the SDK already set
+
+  # ── Batching — reduces outbound calls to Dash0 ────────────────────────────
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+    send_batch_max_size: 1024
+
+  # ── Memory limiter — back-pressure protection ─────────────────────────────
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 150
+    spike_limit_mib: 50
+
+  # ── Filter — drop health check noise ──────────────────────────────────────
+  filter/health:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] == "/health"'
+        - 'attributes["url.path"] == "/health"'
+
+exporters:
+  otlp/dash0:
+    endpoint: ${DASH0_OTLP_ENDPOINT}
+    headers:
+      Authorization: "Bearer ${DASH0_AUTH_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  # ── Debug exporter — dumps spans/logs to stdout (→ CloudWatch) ────────────
+  # Set verbosity: detailed to see full attributes including resourcedetection output
+  # Remove from pipelines before production use
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, filter/health, batch]
+      exporters: [otlp/dash0, debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/dash0, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/dash0]
+  telemetry:
+    logs:
+      level: info                    # bumped from warn for demo visibility
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888         # Prometheus metrics: curl localhost:8888/metrics

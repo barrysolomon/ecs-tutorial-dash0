@@ -1,0 +1,141 @@
+{
+  "family": "dash0-demo",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/<EXECUTION_ROLE_NAME>",
+  "containerDefinitions": [
+    {
+      "name": "app",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/<SERVICE_NAME>:latest",
+      "essential": true,
+      "dependsOn": [
+        {
+          "containerName": "otel-collector",
+          "condition": "START"
+        }
+      ],
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "PORT",
+          "value": "3000"
+        },
+        {
+          "name": "OTEL_SERVICE_NAME",
+          "value": "<YOUR_SERVICE_NAME>"
+        },
+        {
+          "name": "DEPLOYMENT_ENV",
+          "value": "demo"
+        },
+        {
+          "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+          "value": "http://localhost:4317"
+        },
+        {
+          "name": "OTEL_EXPORTER_OTLP_PROTOCOL",
+          "value": "grpc"
+        },
+        {
+          "name": "OTEL_RESOURCE_ATTRIBUTES",
+          "value": "deployment.environment=demo"
+        },
+        {
+          "name": "OTEL_TRACES_EXPORTER",
+          "value": "otlp"
+        },
+        {
+          "name": "OTEL_LOGS_EXPORTER",
+          "value": "otlp"
+        },
+        {
+          "name": "OTEL_PROPAGATORS",
+          "value": "tracecontext,baggage"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/<SERVICE_NAME>",
+          "awslogs-region": "<REGION>",
+          "awslogs-stream-prefix": "app"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://localhost:3000/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""
+        ],
+        "interval": 15,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      }
+    },
+    {
+      "name": "otel-collector",
+      "image": "otel/opentelemetry-collector-contrib:0.120.0",
+      "essential": true,
+      "command": [
+        "--config=env:OTEL_COLLECTOR_CONFIG"
+      ],
+      "portMappings": [
+        {
+          "containerPort": 4317,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 4318,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 13133,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 55679,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 8888,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "OTEL_COLLECTOR_CONFIG",
+          "value": "<SEE collector/otel-collector-config.yaml>"
+        },
+        {
+          "name": "DASH0_OTLP_ENDPOINT",
+          "value": "api.<REGION>.aws.dash0.com:4317"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "DASH0_AUTH_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:<SECRET_NAME>"
+        }
+      ],
+      "cpu": 256,
+      "memory": 512,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/<SERVICE_NAME>",
+          "awslogs-region": "<REGION>",
+          "awslogs-stream-prefix": "collector"
+        }
+      }
+    }
+  ]
+}

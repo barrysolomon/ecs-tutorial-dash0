@@ -1,0 +1,20 @@
+{
+  "name": "dash0-ecs-demo",
+  "version": "1.0.0",
+  "description": "Demo app for Dash0 ECS onboarding",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/api-logs": "^0.56.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.54.0",
+    "@opentelemetry/exporter-logs-otlp-grpc": "^0.56.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.56.0",
+    "@opentelemetry/resources": "^1.29.0",
+    "@opentelemetry/sdk-logs": "^0.56.0",
+    "@opentelemetry/sdk-node": "^0.56.0",
+    "@opentelemetry/semantic-conventions": "^1.29.0"
+  }
+}

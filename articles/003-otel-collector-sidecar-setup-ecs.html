@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTel Collector Sidecar Setup on ECS Fargate — Step by Step</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            font-size: 16px;
+            line-height: 1.7;
+            color: #333;
+            background-color: #fafafa;
+        }
+
+        .container {
+            display: flex;
+            max-width: 1200px;
+            margin: 0 auto;
+            gap: 40px;
+            padding: 40px 20px;
+        }
+
+        .toc-wrapper {
+            position: sticky;
+            top: 40px;
+            height: fit-content;
+            flex: 0 0 250px;
+        }
+
+        .toc {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            font-size: 14px;
+            line-height: 1.8;
+        }
+
+        .toc h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .toc ul {
+            list-style: none;
+        }
+
+        .toc ul ul {
+            margin-left: 16px;
+            margin-top: 8px;
+        }
+
+        .toc a {
+            color: #0066cc;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .toc a:hover {
+            color: #0052a3;
+            text-decoration: underline;
+        }
+
+        .main-content {
+            flex: 1;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .article-header {
+            border-bottom: 2px solid #f0f0f5;
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+        }
+
+        .article-title {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 16px;
+        }
+
+        .article-meta {
+            display: flex;
+            gap: 24px;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .meta-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .meta-label {
+            font-weight: 600;
+            color: #999;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .meta-value {
+            color: #333;
+        }
+
+        .tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .tag {
+            display: inline-block;
+            background-color: #e8f0ff;
+            color: #0066cc;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-top: 40px;
+            margin-bottom: 24px;
+            scroll-margin-top: 80px;
+        }
+
+        h1:first-child {
+            margin-top: 0;
+        }
+
+        h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-top: 32px;
+            margin-bottom: 16px;
+            scroll-margin-top: 80px;
+        }
+
+        h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            scroll-margin-top: 80px;
+        }
+
+        h4 {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-top: 16px;
+            margin-bottom: 8px;
+        }
+
+        p {
+            margin-bottom: 16px;
+        }
+
+        a {
+            color: #0066cc;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        a:hover {
+            color: #0052a3;
+            text-decoration: underline;
+        }
+
+        code {
+            background-color: #f0f0f5;
+            color: #d73a49;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+        }
+
+        pre {
+            background-color: #1e1e2e;
+            color: #e0e0e0;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-bottom: 16px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+            border-radius: 0;
+        }
+
+        ul, ol {
+            margin-bottom: 16px;
+            margin-left: 24px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        li > p {
+            margin-bottom: 8px;
+        }
+
+        strong {
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+
+        em {
+            font-style: italic;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin-bottom: 24px;
+        }
+
+        table thead {
+            background-color: #1a1a2e;
+            color: white;
+        }
+
+        table th {
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        table tbody tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+
+        table tbody tr:hover {
+            background-color: #f0f0f5;
+        }
+
+        blockquote {
+            border-left: 4px solid #0066cc;
+            padding-left: 16px;
+            margin: 24px 0;
+            color: #666;
+            font-style: italic;
+        }
+
+        .related-articles {
+            background-color: #f8f9fa;
+            padding: 16px;
+            border-left: 4px solid #0066cc;
+            border-radius: 4px;
+            margin-bottom: 24px;
+        }
+
+        .related-articles strong {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .related-articles ul {
+            margin-left: 20px;
+        }
+
+        .related-articles li {
+            margin-bottom: 6px;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #e0e0e0;
+            margin: 32px 0;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                flex-direction: column;
+                gap: 20px;
+                padding: 20px;
+            }
+
+            .toc-wrapper {
+                position: static;
+                flex: none;
+                margin-bottom: 20px;
+            }
+
+            .main-content {
+                padding: 20px;
+            }
+
+            .article-title {
+                font-size: 24px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            h2 {
+                font-size: 18px;
+            }
+
+            h3 {
+                font-size: 16px;
+            }
+
+            .article-meta {
+                gap: 16px;
+            }
+        }
+
+        @media print {
+            body {
+                background-color: white;
+            }
+
+            .container {
+                max-width: 100%;
+                padding: 0;
+                gap: 0;
+            }
+
+            .toc-wrapper {
+                display: none;
+            }
+
+            .main-content {
+                box-shadow: none;
+                padding: 0;
+                border-radius: 0;
+            }
+
+            h1, h2, h3, h4 {
+                page-break-after: avoid;
+            }
+
+            p, ul, ol, pre, table {
+                page-break-inside: avoid;
+            }
+
+            a {
+                color: #0066cc;
+            }
+
+            .article-header {
+                border-bottom: 1px solid #ccc;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="toc-wrapper">
+            <div class="toc">
+                <h3>Contents</h3>
+                <ul>
+                    <li><a href="#tl-dr">TL;DR</a></li>
+                    <li><a href="#prerequisites">Prerequisites</a></li>
+                    <li><a href="#step-1-store-the-dash0-auth-token-in-secrets-manager">Step 1: Store Auth Token</a></li>
+                    <li><a href="#step-2-write-the-collector-config">Step 2: Write Config</a></li>
+                    <li><a href="#step-3-add-the-sidecar-to-your-ecs-task-definition">Step 3: Add Sidecar</a></li>
+                    <li><a href="#option-1-config-via-environment-variable-simplest">Option 1: Env Var</a></li>
+                    <li><a href="#option-2-config-baked-into-a-custom-image-production-grade">Option 2: Custom Image</a></li>
+                    <li><a href="#step-4-register-the-task-definition-and-deploy">Step 4: Register & Deploy</a></li>
+                    <li><a href="#step-5-iac-examples">Step 5: IaC Examples</a></li>
+                    <li><a href="#terraform">Terraform</a></li>
+                    <li><a href="#aws-cdk-typescript">AWS CDK</a></li>
+                    <li><a href="#step-6-verify-its-working">Step 6: Verify</a></li>
+                    <li><a href="#troubleshooting">Troubleshooting</a></li>
+                    <li><a href="#sources--references">Sources & References</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="article-header">
+                <h1 class="article-title">OTel Collector Sidecar Setup on ECS Fargate — Step by Step</h1>
+                <div class="article-meta">
+                    <div class="meta-item">
+                        <span class="meta-label">ID</span>
+                        <span class="meta-value">003</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Author</span>
+                        <span class="meta-value">Barry Solomon</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Created</span>
+                        <span class="meta-value">2026-03-19</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Updated</span>
+                        <span class="meta-value">2026-03-19</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Status</span>
+                        <span class="meta-value">Published</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Audience</span>
+                        <span class="meta-value">SA, SE, DevOps, Platform Engineer</span>
+                    </div>
+                </div>
+                <div class="tags">
+                    <span class="tag">ecs</span>
+                    <span class="tag">fargate</span>
+                    <span class="tag">otel-collector</span>
+                    <span class="tag">sidecar</span>
+                    <span class="tag">setup</span>
+                    <span class="tag">aws</span>
+                    <span class="tag">secrets-manager</span>
+                    <span class="tag">task-definition</span>
+                </div>
+            </div>
+
+            <h2 id="tl-dr">TL;DR</h2>
+            <p>Add a collector sidecar to your ECS task in 6 steps: store the auth token in Secrets Manager, write a collector config, modify the task definition (bump resources, add the sidecar container, point the app at localhost:4317), register and deploy, then verify in Dash0.</p>
+
+            <div class="related-articles">
+                <strong>Related articles:</strong>
+                <ul>
+                    <li>For deciding whether you need a sidecar, see <strong>001 — Decision Guide</strong></li>
+                    <li>For app instrumentation, see <strong>002 — Instrumenting Apps</strong></li>
+                    <li>For collector config customization (PII redaction, filtering, multi-backend, sampling), see <strong>004 — Configuration Reference</strong></li>
+                </ul>
+            </div>
+
+            <h2 id="prerequisites">Prerequisites</h2>
+            <ul>
+                <li>AWS CLI configured and authenticated</li>
+                <li>An existing ECS task definition (or you're creating one)</li>
+                <li>A Dash0 auth token (<code>auth_xxxx</code>) — get this from Dash0 → Organization Settings → Auth Tokens</li>
+                <li>Your Dash0 OTLP endpoint (e.g., <code>api.eu-west-1.aws.dash0.com:4317</code>)</li>
+            </ul>
+
+            <h2 id="step-1-store-the-dash0-auth-token-in-secrets-manager">Step 1: Store the Dash0 Auth Token in Secrets Manager</h2>
+            <p>Don't put the auth token in plaintext in your task definition. Use AWS Secrets Manager:</p>
+
+            <pre><code>aws secretsmanager create-secret \
+    --name "dash0/auth-token" \
+    --description "Dash0 OTLP ingest auth token" \
+    --secret-string "auth_xxxxxxxxxxxxxxxxxxxx" \
+    --region eu-west-1</code></pre>
+
+            <p>Note the ARN it returns — you'll reference this in the task definition. The ECS execution role needs <code>secretsmanager:GetSecretValue</code> permission on this ARN.</p>
+
+            <p>To update an existing secret:</p>
+
+            <pre><code>aws secretsmanager put-secret-value \
+    --secret-id "dash0/auth-token" \
+    --secret-string "auth_xxxxxxxxxxxxxxxxxxxx" \
+    --region eu-west-1</code></pre>
+
+            <h2 id="step-2-write-the-collector-config">Step 2: Write the Collector Config</h2>
+            <p>Create a YAML config file. This is the minimum production-ready config for ECS + Dash0:</p>
+
+            <pre><code>extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133        # collector health endpoint
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317     # app sends telemetry here
+      http:
+        endpoint: 0.0.0.0:4318     # optional HTTP receiver
+
+processors:
+  # Order matters — listed here in the order they should appear in pipelines
+
+  memory_limiter:                   # ALWAYS first — protects against OOM
+    check_interval: 1s
+    limit_mib: 150                  # hard limit — starts dropping data
+    spike_limit_mib: 50             # soft limit — starts refusing data
+
+  resourcedetection:                # auto-stamps ECS metadata on every signal
+    detectors: [env, ecs, ec2]      # env reads OTEL_RESOURCE_ATTRIBUTES,
+    timeout: 5s                     # ecs queries Task Metadata Endpoint,
+    override: false                 # ec2 adds cloud.account.id, AZ, etc.
+                                    # override: false = don't overwrite what the SDK set
+
+  filter/health:                    # drop ALB health check noise
+    error_mode: ignore              # don't error if no match
+    traces:
+      span:
+        - 'attributes["http.target"] == "/health"'
+        - 'attributes["url.path"] == "/health"'
+
+  batch:                            # ALWAYS last — batches the final processed data
+    send_batch_size: 512
+    timeout: 5s
+    send_batch_max_size: 1024
+
+exporters:
+  otlp/dash0:
+    endpoint: ${DASH0_OTLP_ENDPOINT}          # injected via env var at runtime
+    headers:
+      Authorization: "Bearer ${DASH0_AUTH_TOKEN}"  # injected via Secrets Manager
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, filter/health, batch]
+      exporters: [otlp/dash0]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/dash0]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/dash0]
+  telemetry:
+    logs:
+      level: warn                   # collector's own logging — keep quiet unless debugging</code></pre>
+
+            <p><strong>Key points about this config:</strong></p>
+            <ul>
+                <li><code>${DASH0_OTLP_ENDPOINT}</code> and <code>${DASH0_AUTH_TOKEN}</code> are <strong>not</strong> bash variables — the collector resolves them from environment variables at runtime. You set these in the task definition (step 3).</li>
+                <li>Processor order in the pipeline array is the execution order. <code>memory_limiter</code> first, <code>batch</code> last. Everything else in between.</li>
+                <li><code>override: false</code> on <code>resourcedetection</code> means if your app SDK already sets <code>service.name</code>, the collector won't overwrite it. It only <em>adds</em> attributes that aren't already present.</li>
+                <li><code>filter/health</code> only applies to traces — you generally want health check logs to still flow through for debugging startup issues.</li>
+            </ul>
+
+            <h2 id="step-3-add-the-sidecar-to-your-ecs-task-definition">Step 3: Add the Sidecar to Your ECS Task Definition</h2>
+            <p>You need to modify three things in your task definition:</p>
+
+            <p><strong>A. Bump task-level resources</strong> to accommodate the sidecar:</p>
+
+            <pre><code>{
+  "cpu": "1024",     // was "512" — add headroom for the collector
+  "memory": "2048"   // was "1024"
+}</code></pre>
+
+            <p><strong>B. Change your app container's OTLP endpoint</strong> from Dash0's endpoint to the local collector:</p>
+
+            <pre><code>{
+  "name": "app",
+  "environment": [
+    { "name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://localhost:4317" },
+    { "name": "OTEL_EXPORTER_OTLP_PROTOCOL", "value": "grpc" },
+    { "name": "OTEL_RESOURCE_ATTRIBUTES",     "value": "deployment.environment=demo" }
+  ],
+  "dependsOn": [
+    { "containerName": "otel-collector", "condition": "HEALTHY" }
+  ]
+}</code></pre>
+
+            <p>Note what's removed compared to direct export: no <code>OTEL_EXPORTER_OTLP_HEADERS</code> (no auth needed for localhost), no static <code>cloud.provider=aws,cloud.platform=aws_ecs</code> in resource attributes (the collector injects these dynamically).</p>
+
+            <p>The <code>dependsOn</code> ensures the app doesn't start until the collector is healthy — otherwise the app's first spans would fail to export.</p>
+
+            <p><strong>C. Add the collector sidecar container.</strong> There are two sub-options here depending on how you inject the config:</p>
+
+            <h3 id="option-1-config-via-environment-variable-simplest">Option 1: Config via environment variable (simplest)</h3>
+            <p>Used in demos and quick starts:</p>
+
+            <pre><code>{
+  "name": "otel-collector",
+  "image": "otel/opentelemetry-collector-contrib:0.120.0",
+  "essential": true,
+  "command": ["--config=env:OTEL_COLLECTOR_CONFIG"],
+  "portMappings": [
+    { "containerPort": 4317, "protocol": "tcp" },
+    { "containerPort": 4318, "protocol": "tcp" },
+    { "containerPort": 13133, "protocol": "tcp" }
+  ],
+  "environment": [
+    {
+      "name": "OTEL_COLLECTOR_CONFIG",
+      "value": "extensions:\n  health_check:\n    endpoint: 0.0.0.0:13133\nreceivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\n      http:\n        endpoint: 0.0.0.0:4318\n..."
+    },
+    { "name": "DASH0_OTLP_ENDPOINT", "value": "api.eu-west-1.aws.dash0.com:4317" }
+  ],
+  "secrets": [
+    {
+      "name": "DASH0_AUTH_TOKEN",
+      "valueFrom": "arn:aws:secretsmanager:eu-west-1:123456789:secret:dash0/auth-token-AbCdEf"
+    }
+  ],
+  "cpu": 256,
+  "memory": 512,
+  "logConfiguration": {
+    "logDriver": "awslogs",
+    "options": {
+      "awslogs-group": "/ecs/your-service",
+      "awslogs-region": "eu-west-1",
+      "awslogs-stream-prefix": "collector"
+    }
+  },
+  "healthCheck": {
+    "command": ["CMD-SHELL", "wget -q --spider http://localhost:13133/ || exit 1"],
+    "interval": 10,
+    "timeout": 5,
+    "retries": 3,
+    "startPeriod": 10
+  }
+}</code></pre>
+
+            <p>The YAML needs to be escaped as a single-line JSON string in the <code>value</code> field. In production, most IaC tools (Terraform, CDK, Pulumi) handle this escaping natively — see step 5.</p>
+
+            <h3 id="option-2-config-baked-into-a-custom-image-production-grade">Option 2: Config baked into a custom image (production-grade)</h3>
+            <p>Create a Dockerfile:</p>
+
+            <pre><code>FROM otel/opentelemetry-collector-contrib:0.120.0
+COPY otel-collector-config.yaml /etc/otelcol-contrib/config.yaml</code></pre>
+
+            <p>Build and push:</p>
+
+            <pre><code>docker build -t your-ecr-repo/otel-collector:v1 .
+docker push your-ecr-repo/otel-collector:v1</code></pre>
+
+            <p>Then the container definition is simpler — no <code>command</code> override, no config in env vars:</p>
+
+            <pre><code>{
+  "name": "otel-collector",
+  "image": "123456789.dkr.ecr.eu-west-1.amazonaws.com/otel-collector:v1",
+  "essential": true,
+  "environment": [
+    { "name": "DASH0_OTLP_ENDPOINT", "value": "api.eu-west-1.aws.dash0.com:4317" }
+  ],
+  "secrets": [
+    {
+      "name": "DASH0_AUTH_TOKEN",
+      "valueFrom": "arn:aws:secretsmanager:eu-west-1:123456789:secret:dash0/auth-token-AbCdEf"
+    }
+  ],
+  "portMappings": [
+    { "containerPort": 4317, "protocol": "tcp" },
+    { "containerPort": 4318, "protocol": "tcp" },
+    { "containerPort": 13133, "protocol": "tcp" }
+  ],
+  "cpu": 256,
+  "memory": 512,
+  "logConfiguration": {
+    "logDriver": "awslogs",
+    "options": {
+      "awslogs-group": "/ecs/your-service",
+      "awslogs-region": "eu-west-1",
+      "awslogs-stream-prefix": "collector"
+    }
+  },
+  "healthCheck": {
+    "command": ["CMD-SHELL", "wget -q --spider http://localhost:13133/ || exit 1"],
+    "interval": 10,
+    "timeout": 5,
+    "retries": 3,
+    "startPeriod": 10
+  }
+}</code></pre>
+
+            <p><strong>When to choose which:</strong> Use option 1 for demos and quick starts. Use option 2 when you want immutable, versioned config — you know exactly what's running because it's tied to the image tag.</p>
+
+            <h2 id="step-4-register-the-task-definition-and-deploy">Step 4: Register the Task Definition and Deploy</h2>
+
+            <pre><code># Register the updated task definition
+aws ecs register-task-definition \
+    --cli-input-json file://task-definition.json \
+    --region eu-west-1
+
+# Update the service to use the new task definition (rolling deploy)
+aws ecs update-service \
+    --cluster your-cluster \
+    --service your-service \
+    --task-definition your-service \
+    --region eu-west-1
+
+# Wait for the new task to reach steady state
+aws ecs wait services-stable \
+    --cluster your-cluster \
+    --services your-service \
+    --region eu-west-1</code></pre>
+
+            <h2 id="step-5-iac-examples">Step 5: IaC Examples</h2>
+
+            <h3 id="terraform">Terraform</h3>
+            <p>Most common for ECS customers:</p>
+
+            <pre><code># In your task definition's container_definitions JSON
+container_definitions = jsonencode([
+  {
+    name  = "app"
+    image = "your-app:latest"
+    environment = [
+      { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "http://localhost:4317" },
+      { name = "OTEL_EXPORTER_OTLP_PROTOCOL", value = "grpc" },
+    ]
+    dependsOn = [{ containerName = "otel-collector", condition = "HEALTHY" }]
+    # ... rest of app config
+  },
+  {
+    name    = "otel-collector"
+    image   = "otel/opentelemetry-collector-contrib:0.120.0"
+    command = ["--config=env:OTEL_COLLECTOR_CONFIG"]
+    environment = [
+      { name = "OTEL_COLLECTOR_CONFIG", value = file("otel-collector-config.yaml") },
+      { name = "DASH0_OTLP_ENDPOINT",  value = var.dash0_endpoint },
+    ]
+    secrets = [{ name = "DASH0_AUTH_TOKEN", valueFrom = aws_secretsmanager_secret.dash0.arn }]
+    # ... ports, healthCheck, logConfiguration
+  }
+])</code></pre>
+
+            <p>Note: Terraform's <code>file()</code> function reads the YAML as a string and <code>jsonencode</code> handles the JSON escaping — no manual escaping needed.</p>
+
+            <h3 id="aws-cdk-typescript">AWS CDK (TypeScript)</h3>
+
+            <pre><code>const collectorConfig = fs.readFileSync('otel-collector-config.yaml', 'utf-8');
+
+taskDefinition.addContainer('otel-collector', {
+  image: ecs.ContainerImage.fromRegistry('otel/opentelemetry-collector-contrib:0.120.0'),
+  command: ['--config=env:OTEL_COLLECTOR_CONFIG'],
+  environment: {
+    OTEL_COLLECTOR_CONFIG: collectorConfig,
+    DASH0_OTLP_ENDPOINT: 'api.eu-west-1.aws.dash0.com:4317',
+  },
+  secrets: {
+    DASH0_AUTH_TOKEN: ecs.Secret.fromSecretsManager(dash0Secret),
+  },
+  cpu: 256,
+  memoryLimitMiB: 512,
+  healthCheck: {
+    command: ['CMD-SHELL', 'wget -q --spider http://localhost:13133/ || exit 1'],
+    interval: cdk.Duration.seconds(10),
+    startPeriod: cdk.Duration.seconds(10),
+  },
+  logging: new ecs.AwsLogDriver({ streamPrefix: 'collector' }),
+});</code></pre>
+
+            <h2 id="step-6-verify-its-working">Step 6: Verify It's Working</h2>
+            <p>After deployment:</p>
+
+            <ol>
+                <li><strong>Check the collector started.</strong> In CloudWatch Logs, look at the <code>collector</code> log stream. On success you'll see the collector's startup banner with the pipeline config. On failure, you'll see a YAML parse error or a missing processor error — both are clear and actionable.</li>
+                <li><strong>Send a test request.</strong> Hit your service's endpoint and check Dash0 for traces.</li>
+                <li><strong>Verify resource attributes.</strong> In Dash0, open a trace and inspect the resource attributes. You should see:
+                    <ul>
+                        <li><code>aws.ecs.cluster.arn</code> — the cluster ARN (injected by the collector)</li>
+                        <li><code>aws.ecs.task.arn</code> — the specific running task (injected by the collector)</li>
+                        <li><code>cloud.availability_zone</code> — the AZ (injected by the collector)</li>
+                        <li><code>service.name</code> — your app's name (set by the SDK, preserved by the collector)</li>
+                    </ul>
+                    <p>If you see <code>cloud.provider</code> and <code>cloud.platform</code> but <strong>not</strong> <code>aws.ecs.cluster.arn</code>, the <code>resourcedetection</code> processor's <code>ecs</code> detector isn't reaching the Task Metadata Endpoint. Ensure the task is running on Fargate (TMDE v4) and the collector has network access within the task.</p>
+                </li>
+                <li><strong>Verify health check filtering.</strong> If your ALB has a health check, you should <strong>not</strong> see <code>/health</code> spans in Dash0. If you do, the filter processor isn't matching — check the attribute name (<code>http.target</code> vs <code>url.path</code> depends on OTel SDK version and HTTP semantic conventions version).</li>
+            </ol>
+
+            <h2 id="troubleshooting">Troubleshooting</h2>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Symptom</th>
+                            <th>Likely Cause</th>
+                            <th>Fix</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>App container stuck in PENDING</td>
+                            <td>Collector not healthy → <code>dependsOn</code> blocks app start</td>
+                            <td>Check collector logs in CloudWatch. Common: YAML parse error, wrong image (core vs contrib), auth failure to Dash0.</td>
+                        </tr>
+                        <tr>
+                            <td>Traces appear in Dash0 but no <code>aws.ecs.*</code> attributes</td>
+                            <td><code>resourcedetection</code> not in the pipeline, or <code>ecs</code> not in <code>detectors</code> list</td>
+                            <td>Verify the pipeline includes <code>resourcedetection</code> and the processor config includes <code>detectors: [ecs]</code>.</td>
+                        </tr>
+                        <tr>
+                            <td><code>aws.ecs.*</code> attributes present but <code>cloud.availability_zone</code> missing</td>
+                            <td><code>ec2</code> detector not enabled</td>
+                            <td>Add <code>ec2</code> to the detectors list: <code>detectors: [env, ecs, ec2]</code>. The AZ comes from the EC2 metadata API.</td>
+                        </tr>
+                        <tr>
+                            <td><code>/health</code> spans still showing in Dash0</td>
+                            <td>Filter attribute name mismatch</td>
+                            <td>OTel HTTP semantic conventions changed from <code>http.target</code> to <code>url.path</code> in newer SDK versions. Add both to the filter.</td>
+                        </tr>
+                        <tr>
+                            <td>Collector OOM-killed</td>
+                            <td><code>memory_limiter</code> not configured or limits too high</td>
+                            <td>Add or lower <code>limit_mib</code>. For 512 MB container, use <code>limit_mib: 400, spike_limit_mib: 100</code>.</td>
+                        </tr>
+                        <tr>
+                            <td><code>400 Bad Request</code> from Dash0 exporter</td>
+                            <td>Malformed spans or wrong endpoint</td>
+                            <td>Check the collector logs for the full error. Common: using HTTP endpoint with gRPC exporter, or wrong port. Dash0 gRPC is port 4317.</td>
+                        </tr>
+                        <tr>
+                            <td>Collector starts but no data flows</td>
+                            <td>App still pointing at Dash0 directly instead of localhost</td>
+                            <td>Check the app's <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> — must be <code>http://localhost:4317</code>, not the Dash0 endpoint.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h2 id="sources--references">Sources & References</h2>
+            <ul>
+                <li><a href="https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/resourcedetectionprocessor/README.md">OTel Collector resourcedetection processor — ECS detector</a></li>
+                <li><a href="https://dash0.com/docs/dash0/monitoring/resources/recognize-common-resource-fragmentation-scenarios">Dash0: Resource Fragmentation Scenarios</a></li>
+                <li><a href="https://dash0.com/guides/opentelemetry-batch-processor">Dash0: Batch Processor Guide</a></li>
+                <li><a href="https://dash0.com/guides/opentelemetry-resource-processor">Dash0: Resource Processor Guide</a></li>
+                <li><a href="https://opentelemetry.io/docs/collector/scaling/">OTel Collector Scaling Guide</a></li>
+                <li><a href="https://opentelemetry.io/docs/collector/resiliency/">OTel Collector Resiliency</a></li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

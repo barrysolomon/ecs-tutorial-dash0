@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instrumenting Applications for OpenTelemetry on ECS</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      color: #333;
+      background-color: #fafafa;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      gap: 40px;
+      position: relative;
+    }
+
+    .main-content {
+      flex: 1;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .sidebar {
+      width: 250px;
+      position: sticky;
+      top: 20px;
+      height: fit-content;
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+    }
+
+    .toc {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .toc-title {
+      font-weight: 600;
+      color: #1a1a2e;
+      margin-bottom: 15px;
+      font-size: 14px;
+    }
+
+    .toc ul {
+      list-style: none;
+    }
+
+    .toc li {
+      margin: 8px 0;
+    }
+
+    .toc a {
+      color: #555;
+      text-decoration: none;
+      display: block;
+      padding: 4px 0;
+      border-left: 2px solid transparent;
+      padding-left: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .toc a:hover {
+      color: #1a1a2e;
+      border-left-color: #c792ea;
+    }
+
+    .toc .level-2 { padding-left: 12px; }
+    .toc .level-3 { padding-left: 24px; font-size: 13px; }
+
+    /* Header and Frontmatter */
+    .article-header {
+      border-bottom: 2px solid #f0f0f5;
+      padding-bottom: 30px;
+      margin-bottom: 40px;
+    }
+
+    .article-title {
+      font-size: 32px;
+      color: #1a1a2e;
+      margin-bottom: 15px;
+      font-weight: 600;
+    }
+
+    .article-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 20px;
+    }
+
+    .meta-item {
+      display: flex;
+      gap: 8px;
+    }
+
+    .meta-label {
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 15px;
+    }
+
+    .tag {
+      display: inline-block;
+      background: #e8ddf5;
+      color: #5c3d8f;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    /* Headings */
+    h1 {
+      font-size: 28px;
+      color: #1a1a2e;
+      margin: 40px 0 20px 0;
+      font-weight: 600;
+      padding-top: 20px;
+      scroll-margin-top: 80px;
+    }
+
+    h2 {
+      font-size: 22px;
+      color: #1a1a2e;
+      margin: 35px 0 15px 0;
+      font-weight: 600;
+      padding-top: 20px;
+      scroll-margin-top: 80px;
+    }
+
+    h3 {
+      font-size: 18px;
+      color: #1a1a2e;
+      margin: 25px 0 12px 0;
+      font-weight: 600;
+      scroll-margin-top: 80px;
+    }
+
+    /* Paragraphs */
+    p {
+      margin: 15px 0;
+      line-height: 1.8;
+    }
+
+    /* Lists */
+    ul, ol {
+      margin: 15px 0 15px 30px;
+    }
+
+    li {
+      margin: 8px 0;
+    }
+
+    ul ul, ul ol, ol ul, ol ol {
+      margin: 8px 0 8px 30px;
+    }
+
+    /* Links */
+    a {
+      color: #5c3d8f;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(92, 61, 143, 0.3);
+      transition: all 0.2s ease;
+    }
+
+    a:hover {
+      color: #1a1a2e;
+      border-bottom-color: #1a1a2e;
+    }
+
+    /* Inline Code */
+    code {
+      background: #f0f0f5;
+      color: #333;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+    }
+
+    /* Code Blocks */
+    pre {
+      background: #1e1e2e;
+      color: #e8e8e8;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 20px 0;
+      line-height: 1.5;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+    }
+
+    pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    /* Syntax highlighting within code blocks */
+    .keyword { color: #c792ea; }
+    .type { color: #c792ea; }
+    .string { color: #c3e88d; }
+    .comment { color: #676e95; }
+    .attr { color: #89ddff; }
+
+    /* Tables */
+    .table-wrapper {
+      overflow-x: auto;
+      margin: 20px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th {
+      background: #1a1a2e;
+      color: white;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      border: 1px solid #333;
+    }
+
+    td {
+      padding: 12px;
+      border: 1px solid #e0e0e0;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #f8f9fa;
+    }
+
+    tbody tr:nth-child(even) {
+      background: white;
+    }
+
+    tbody tr:hover {
+      background: #f0f0f5;
+    }
+
+    /* Strong and emphasis */
+    strong {
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    em {
+      font-style: italic;
+    }
+
+    /* Blockquotes */
+    blockquote {
+      border-left: 4px solid #c792ea;
+      padding: 0 20px;
+      margin: 20px 0;
+      color: #555;
+      font-style: italic;
+    }
+
+    /* Horizontal rule */
+    hr {
+      border: none;
+      border-top: 2px solid #f0f0f5;
+      margin: 30px 0;
+    }
+
+    /* Print styles */
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+
+      .container {
+        display: block;
+        gap: 0;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .main-content {
+        box-shadow: none;
+        padding: 0;
+      }
+
+      a {
+        border-bottom: none;
+      }
+
+      pre {
+        page-break-inside: avoid;
+      }
+
+      h1, h2, h3 {
+        page-break-after: avoid;
+      }
+
+      table {
+        page-break-inside: avoid;
+      }
+    }
+
+    /* Mobile styles */
+    @media (max-width: 900px) {
+      .container {
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .sidebar {
+        position: static;
+        width: 100%;
+        max-height: none;
+        margin-bottom: 20px;
+      }
+
+      .main-content {
+        padding: 20px;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      h2 {
+        font-size: 18px;
+      }
+
+      h3 {
+        font-size: 16px;
+      }
+
+      body {
+        padding: 10px;
+      }
+    }
+
+    /* Scroll bar styling */
+    .sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .sidebar::-webkit-scrollbar-track {
+      background: #f0f0f5;
+      border-radius: 3px;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb {
+      background: #c792ea;
+      border-radius: 3px;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb:hover {
+      background: #5c3d8f;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <aside class="sidebar">
+      <div class="toc">
+        <div class="toc-title">Contents</div>
+        <ul>
+          <li><a href="#tldr" class="level-2">TL;DR</a></li>
+          <li><a href="#context" class="level-2">Context</a></li>
+          <li><a href="#auto-instrumentation" class="level-2">Auto-Instrumentation</a></li>
+          <li><a href="#what-auto-instrumentation-captures" class="level-2">What Auto-Instrumentation Captures</a></li>
+          <li><a href="#manual-instrumentation" class="level-2">Manual Instrumentation</a></li>
+          <li><a href="#recommendation" class="level-2">Recommendation for Customers</a></li>
+          <li><a href="#task-definition" class="level-2">Task Definition Environment Variables</a></li>
+          <li><a href="#log-correlation" class="level-2">Log Correlation</a></li>
+          <li><a href="#sources" class="level-2">Sources & References</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <article>
+        <div class="article-header">
+          <h1 class="article-title">Instrumenting Applications for OpenTelemetry on ECS</h1>
+          <div class="article-meta">
+            <div class="meta-item">
+              <span class="meta-label">ID:</span>
+              <span>002</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Author:</span>
+              <span>Barry Solomon</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Created:</span>
+              <span>2026-03-19</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Updated:</span>
+              <span>2026-03-19</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Status:</span>
+              <span>Published</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Audience:</span>
+              <span>SA, SE, Developer</span>
+            </div>
+          </div>
+          <div class="tags">
+            <span class="tag">ecs</span>
+            <span class="tag">otel</span>
+            <span class="tag">instrumentation</span>
+            <span class="tag">auto-instrumentation</span>
+            <span class="tag">node</span>
+            <span class="tag">java</span>
+            <span class="tag">python</span>
+            <span class="tag">dotnet</span>
+            <span class="tag">go</span>
+          </div>
+        </div>
+
+        <h2 id="tldr">TL;DR</h2>
+        <p>Auto-instrumentation gets you traces for HTTP, DB, and queue operations with zero code changes — just add a dependency and set environment variables in the ECS task definition. Manual instrumentation adds business-specific spans. Start auto-only, add manual for critical paths.</p>
+
+        <h2 id="context">Context</h2>
+        <p>This topic comes up after a customer has decided to adopt Dash0 and OpenTelemetry. Before the collector has anything to collect (and before you decide between sidecar or direct export), the app needs to produce telemetry. There are two approaches: auto-instrumentation and manual instrumentation. They aren't mutually exclusive — most production setups start with auto and add manual spans for business logic.</p>
+
+        <p><strong>Related articles:</strong></p>
+        <ul>
+          <li>For deciding between sidecar and direct export, see <strong>001 — Decision Guide</strong></li>
+          <li>For setting up the collector sidecar, see <strong>003 — Sidecar Setup</strong></li>
+        </ul>
+
+        <h2 id="auto-instrumentation">Auto-Instrumentation</h2>
+        <p>Auto-instrumentation injects tracing into known libraries (HTTP servers, DB clients, message queues) without changing application code. How you enable it depends on the language:</p>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Language</th>
+                <th>How to Enable</th>
+                <th>Where It's Configured</th>
+                <th>Zero Code Changes?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Node.js</strong></td>
+                <td><code>NODE_OPTIONS='-r @opentelemetry/auto-instrumentations-node/register'</code> or <code>--require @opentelemetry/auto-instrumentations-node/register</code></td>
+                <td><strong>Task definition</strong> (env var) or <strong>Dockerfile</strong> (CMD/ENTRYPOINT). Either works. The OTel packages must be in <code>node_modules</code> (installed via <code>package.json</code> or a separate layer).</td>
+                <td>Yes — if you add the dependency and set the env var, no code changes needed.</td>
+              </tr>
+              <tr>
+                <td><strong>Java</strong></td>
+                <td><code>-javaagent:/path/to/opentelemetry-javaagent.jar</code></td>
+                <td><strong>Dockerfile</strong> (add the agent JAR + set <code>JAVA_TOOL_OPTIONS</code> or modify the entrypoint). Can also be set via <code>JAVA_TOOL_OPTIONS</code> env var in the <strong>task definition</strong> if the JAR is already in the image.</td>
+                <td>Yes — the Java agent instruments at the bytecode level. No code changes.</td>
+              </tr>
+              <tr>
+                <td><strong>Python</strong></td>
+                <td><code>opentelemetry-instrument python app.py</code> or <code>OTEL_PYTHON_CONFIGURATOR=auto</code> with the SDK installed</td>
+                <td><strong>Dockerfile</strong> (change CMD to use <code>opentelemetry-instrument</code> wrapper). The env var approach also works from the <strong>task definition</strong> if the packages are installed.</td>
+                <td>Yes — wraps the Python process. No code changes.</td>
+              </tr>
+              <tr>
+                <td><strong>.NET</strong></td>
+                <td><code>CORECLR_ENABLE_PROFILING=1</code> + <code>CORECLR_PROFILER</code> + <code>CORECLR_PROFILER_PATH</code> env vars, or <code>DOTNET_STARTUP_HOOKS</code></td>
+                <td><strong>Task definition</strong> (env vars) if the profiler DLLs are in the image. Typically configured in the <strong>Dockerfile</strong> alongside the profiler installation.</td>
+                <td>Yes — .NET auto-instrumentation uses CLR profiling APIs. No code changes.</td>
+              </tr>
+              <tr>
+                <td><strong>Go</strong></td>
+                <td>No runtime auto-instrumentation available. Must use compile-time instrumentation (<code>go.opentelemetry.io/contrib/instrumentation/...</code>) or eBPF-based (experimental).</td>
+                <td><strong>Code</strong> — Go requires importing instrumentation libraries and wiring them in code.</td>
+                <td>No — Go doesn't have a runtime agent model. Manual instrumentation required.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>The practical answer for most customers:</strong> "Add the OTel auto-instrumentation package to your Docker image, set one or two environment variables in the task definition, and you get traces for all HTTP/gRPC/DB/queue operations with zero code changes. The environment variables can be set in the task definition — you don't have to touch the Dockerfile if the packages are already installed."</p>
+
+        <h2 id="what-auto-instrumentation-captures">What Auto-Instrumentation Captures</h2>
+        <p>Out of the box, auto-instrumentation covers the framework and library level:</p>
+
+        <ul>
+          <li><strong>Inbound HTTP requests</strong> — a root span per request with method, path, status code, duration</li>
+          <li><strong>Outbound HTTP calls</strong> — child spans for each fetch/axios/http call, with trace context propagation</li>
+          <li><strong>Database queries</strong> — spans for MongoDB, PostgreSQL, MySQL, Redis, etc. with the query (or hashed query) as an attribute</li>
+          <li><strong>Message queues</strong> — spans for Kafka, RabbitMQ, SQS publish/consume</li>
+          <li><strong>gRPC</strong> — spans for both client and server calls</li>
+        </ul>
+
+        <p>What auto-instrumentation does <strong>not</strong> capture: your business logic. It won't know that a particular code path is "validate order" vs. "charge payment" — those are just generic HTTP handler spans. For that, you need manual instrumentation.</p>
+
+        <h2 id="manual-instrumentation">Manual Instrumentation</h2>
+        <p>Manual instrumentation adds custom spans and attributes for business-specific operations. This is code-level work — the developer adds it inside the application.</p>
+
+        <p><strong>Node.js example</strong> (from the Dash0 demo app):</p>
+
+        <pre><code><span class="keyword">const</span> { trace } = <span class="keyword">require</span>(<span class="string">'@opentelemetry/api'</span>);
+<span class="keyword">const</span> tracer = trace.<span class="attr">getTracer</span>(<span class="string">'my-service'</span>);
+
+<span class="comment">// Wrap a business operation in a custom span</span>
+<span class="keyword">await</span> tracer.<span class="attr">startActiveSpan</span>(<span class="string">'validate-order'</span>, <span class="keyword">async</span> (span) => {
+  span.<span class="attr">setAttribute</span>(<span class="string">'order.id'</span>, orderId);
+  span.<span class="attr">setAttribute</span>(<span class="string">'order.items'</span>, itemCount);
+  <span class="comment">// ... business logic ...</span>
+  span.<span class="attr">end</span>();
+});</code></pre>
+
+        <p><strong>Java example:</strong></p>
+
+        <pre><code><span class="type">Tracer</span> tracer = <span class="type">GlobalOpenTelemetry</span>.<span class="attr">getTracer</span>(<span class="string">"my-service"</span>);
+<span class="type">Span</span> span = tracer.<span class="attr">spanBuilder</span>(<span class="string">"validate-order"</span>).<span class="attr">startSpan</span>();
+<span class="keyword">try</span> (<span class="type">Scope</span> scope = span.<span class="attr">makeCurrent</span>()) {
+    span.<span class="attr">setAttribute</span>(<span class="string">"order.id"</span>, orderId);
+    <span class="comment">// ... business logic ...</span>
+} <span class="keyword">finally</span> {
+    span.<span class="attr">end</span>();
+}</code></pre>
+
+        <p>Manual spans nest inside auto-instrumentation spans automatically — the OTel SDK tracks the active span context. So a custom "validate-order" span appears as a child of the auto-generated HTTP request span in the trace waterfall.</p>
+
+        <h2 id="recommendation">Recommendation for Customers</h2>
+        <ol>
+          <li><strong>Start with auto-instrumentation only.</strong> Set the env vars, deploy, confirm traces appear in Dash0. This takes minutes.</li>
+          <li><strong>Add manual spans for critical business logic</strong> once auto-instrumentation is validated. Focus on operations where you need custom attributes (order IDs, customer IDs, payment amounts) or where you want to break a single HTTP request into meaningful sub-operations.</li>
+          <li><strong>Log correlation comes for free</strong> if the app's logger injects <code>trace_id</code> and <code>span_id</code> into structured log output. Most OTel SDK auto-instrumentation does this automatically for popular loggers.</li>
+        </ol>
+
+        <h2 id="task-definition">Task Definition Environment Variables for Auto-Instrumentation</h2>
+        <p>These env vars configure the OTel SDK's behavior. They're set on the <strong>app container</strong>, not the collector:</p>
+
+        <pre><code><span class="punctuation">{</span>
+  <span class="string">"name"</span>: <span class="string">"app"</span>,
+  <span class="string">"environment"</span>: [
+    { <span class="string">"name"</span>: <span class="string">"OTEL_SERVICE_NAME"</span>,              <span class="string">"value"</span>: <span class="string">"my-service"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_EXPORTER_OTLP_ENDPOINT"</span>,    <span class="string">"value"</span>: <span class="string">"http://localhost:4317"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_EXPORTER_OTLP_PROTOCOL"</span>,    <span class="string">"value"</span>: <span class="string">"grpc"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_TRACES_EXPORTER"</span>,           <span class="string">"value"</span>: <span class="string">"otlp"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_LOGS_EXPORTER"</span>,             <span class="string">"value"</span>: <span class="string">"otlp"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_METRICS_EXPORTER"</span>,          <span class="string">"value"</span>: <span class="string">"otlp"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_PROPAGATORS"</span>,               <span class="string">"value"</span>: <span class="string">"tracecontext,baggage"</span> },
+    { <span class="string">"name"</span>: <span class="string">"OTEL_RESOURCE_ATTRIBUTES"</span>,        <span class="string">"value"</span>: <span class="string">"deployment.environment=production"</span> },
+    { <span class="string">"name"</span>: <span class="string">"NODE_OPTIONS"</span>,                    <span class="string">"value"</span>: <span class="string">"-r @opentelemetry/auto-instrumentations-node/register"</span> }
+  ]
+<span class="punctuation">}</span></code></pre>
+
+        <p>The last line (<code>NODE_OPTIONS</code>) is the Node.js auto-instrumentation trigger. For Java, you'd instead set <code>JAVA_TOOL_OPTIONS=-javaagent:/opt/opentelemetry-javaagent.jar</code>. For Python, change the container <code>command</code> to use <code>opentelemetry-instrument</code>. Everything else above is language-agnostic.</p>
+
+        <p>If the app targets the sidecar collector at <code>http://localhost:4317</code>, no auth headers are needed on the app container — the collector handles auth to Dash0.</p>
+
+        <h2 id="log-correlation">Log Correlation</h2>
+        <p>OTel auto-instrumentation automatically injects <code>trace_id</code> and <code>span_id</code> into structured logs from popular logging libraries, enabling seamless correlation between traces and logs in Dash0.</p>
+
+        <p><strong>How it works by language:</strong></p>
+
+        <ul>
+          <li><strong>Node.js</strong> — Pino, Winston, and Bunyan get automatic trace context injection when their OTel instrumentation packages are installed. Trace IDs appear as attributes in structured logs.</li>
+          <li><strong>Java</strong> — Logback and Log4j are instrumented automatically. The OTel SDK injects trace context into the MDC (Mapped Diagnostic Context), which loggers then format into output.</li>
+          <li><strong>Python</strong> — The standard <code>logging</code> module gets automatic trace context injection. Trace IDs become available in log records.</li>
+          <li><strong>.NET</strong> — The instrumentation for popular logging frameworks (Serilog, NLog) automatically injects <code>TraceId</code> and <code>SpanId</code> into log context.</li>
+        </ul>
+
+        <p><strong>What this enables in Dash0:</strong></p>
+
+        <ul>
+          <li>Click from a trace span in Dash0 to see all correlated logs from that span</li>
+          <li>Click from a log entry to see the full trace it was part of</li>
+          <li>Filter logs by trace ID for fast incident investigation</li>
+          <li>Join trace and log metadata in dashboards and queries</li>
+        </ul>
+
+        <p>This correlation works even when logs come from different sources (application logs, infrastructure logs, container logs) as long as they include the trace ID. For container logs routed through FireLens or CloudWatch, a collector sidecar can enrich untraced logs with trace context if they happen during a traced request.</p>
+
+        <h2 id="sources">Sources & References</h2>
+        <ul>
+          <li><a href="https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/auto-instrumentations-node">OpenTelemetry Node.js Auto-Instrumentation</a></li>
+          <li><a href="https://github.com/open-telemetry/opentelemetry-java-instrumentation">OpenTelemetry Java Agent</a></li>
+          <li><a href="https://opentelemetry.io/docs/languages/python/automatic/">OpenTelemetry Python Auto-Instrumentation</a></li>
+          <li><a href="https://github.com/open-telemetry/opentelemetry-dotnet-instrumentation">OpenTelemetry .NET Auto-Instrumentation</a></li>
+          <li><a href="https://github.com/open-telemetry/opentelemetry-go-contrib">OpenTelemetry Go Instrumentation Libraries</a></li>
+          <li><a href="https://opentelemetry.io/docs/specs/otel/trace/api/">OTel Trace API (Manual Instrumentation)</a></li>
+          <li><a href="https://opentelemetry.io/docs/specs/semconv/database/">OTel Semantic Conventions for Databases</a></li>
+        </ul>
+
+      </article>
+    </main>
+  </div>
+</body>
+</html>
