@@ -228,17 +228,33 @@ fi
 aws ec2 delete-route-table --route-table-id "${RT_ID}" --region "${REGION}" &>/dev/null \
     && ok "Route table deleted" || warn "Route table may already be deleted"
 
-step "Deleting subnets"
-aws ec2 delete-subnet --subnet-id "${SUBNET1}" --region "${REGION}" &>/dev/null \
-    && ok "Subnet 1 deleted" || fail "Could not delete subnet ${SUBNET1}"
-aws ec2 delete-subnet --subnet-id "${SUBNET2}" --region "${REGION}" &>/dev/null \
-    && ok "Subnet 2 deleted" || fail "Could not delete subnet ${SUBNET2}"
-
 step "Deleting security groups"
-aws ec2 delete-security-group --group-id "${APP_SG}" --region "${REGION}" &>/dev/null \
-    && ok "App SG deleted" || fail "Could not delete app SG ${APP_SG}"
-aws ec2 delete-security-group --group-id "${ALB_SG}" --region "${REGION}" &>/dev/null \
-    && ok "ALB SG deleted" || fail "Could not delete ALB SG ${ALB_SG}"
+for attempt in 1 2 3 4 5 6; do
+    SG_FAIL=0
+    aws ec2 delete-security-group --group-id "${APP_SG}" --region "${REGION}" &>/dev/null 2>&1 && ok "App SG deleted" || SG_FAIL=$((SG_FAIL + 1))
+    aws ec2 delete-security-group --group-id "${ALB_SG}" --region "${REGION}" &>/dev/null 2>&1 && ok "ALB SG deleted" || SG_FAIL=$((SG_FAIL + 1))
+    if (( SG_FAIL == 0 )); then break; fi
+    if (( attempt < 6 )); then
+        echo -e "${DIM}    Waiting for dependencies to release (attempt ${attempt}/6)...${NC}"
+        sleep 15
+    else
+        [[ $SG_FAIL -gt 0 ]] && fail "Could not delete one or more security groups after retries"
+    fi
+done
+
+step "Deleting subnets"
+for attempt in 1 2 3 4 5 6; do
+    SUB_FAIL=0
+    aws ec2 delete-subnet --subnet-id "${SUBNET1}" --region "${REGION}" &>/dev/null 2>&1 && ok "Subnet 1 deleted" || SUB_FAIL=$((SUB_FAIL + 1))
+    aws ec2 delete-subnet --subnet-id "${SUBNET2}" --region "${REGION}" &>/dev/null 2>&1 && ok "Subnet 2 deleted" || SUB_FAIL=$((SUB_FAIL + 1))
+    if (( SUB_FAIL == 0 )); then break; fi
+    if (( attempt < 6 )); then
+        echo -e "${DIM}    Waiting for dependencies to release (attempt ${attempt}/6)...${NC}"
+        sleep 15
+    else
+        [[ $SUB_FAIL -gt 0 ]] && fail "Could not delete one or more subnets after retries"
+    fi
+done
 
 step "Detaching & deleting internet gateway"
 aws ec2 detach-internet-gateway \

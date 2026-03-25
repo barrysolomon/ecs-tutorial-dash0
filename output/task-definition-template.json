@@ -60,7 +60,6 @@
         {
           "name": "OTEL_PROPAGATORS",
           "value": "tracecontext,baggage"
-
         },
         {
           "name": "ENABLE_AWS_SERVICES",
