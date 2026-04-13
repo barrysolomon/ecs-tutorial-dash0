@@ -78,19 +78,24 @@ const LATKA_SLOW_MS    = parseInt(process.env.LATKA_SLOW_MS ?? '2000', 10);
 
 const LATKA_QUOTES = {
   ok: [
-    'I check the horn, adjust the sparkle. Is okay now. Very good.',
-    'Everything running smooth like butter. Latka approve.',
-    'I give full inspection. This unicorn, top condition. Number one.',
+    'I check the horn, adjust the sparkle. Is okay now. Tenk you veddy much.',
+    'Everything running smooth like butter. Latka approve. Ibi da!',
+    'I give full inspection. This unicorn, top condition. Number one. Tenk you veddy much.',
+    'Nik nik... I mean, the engine. The engine is veddy good. All clean.',
+    'In my country we have saying: happy unicorn, happy rider. This one? Veddy happy.',
   ],
   slow: [
-    'Hmm, this one make funny noise. I look more careful... Ah, is just the glitter filter. I clean, is fine now.',
-    'I must do deep diagnostic. Take little bit longer... okay, found it. Small crack in rainbow refractor. I fix.',
-    'This unicorn need extra attention. I run full sparkle diagnostic... Okay, is all good now. Just needed tune-up.',
+    'Hmm, this one make funny noise. I look more careful... Ah, is just the glitter filter. I clean, is fine now. Tenk you veddy much.',
+    'I must do deep diagnostic. Take little bit longer... okay, found it. Small crack in rainbow refractor. 110 kebble to fix. I fix.',
+    'This unicorn need extra attention. In my country, we take our time with these things. Is not like America where everything rush rush rush.',
+    'I run full sparkle diagnostic... Okay, is all good now. Just needed tune-up. You know, back home this would cost 270 lithnich. Here? Free. America!',
   ],
   error: [
     'Is broken. Part on backorder from old country. I call my cousin, he maybe have one.',
-    'Oh no. The shimmer capacitor is kaput. I never see this before. Very bad.',
-    'I try fix but this beyond Latka skill. Need specialist. Maybe unicorn doctor.',
+    'Oh no. The shimmer capacitor is kaput. I never see this before. Veddy bad.',
+    'I try fix but this beyond Latka skill. Need specialist. Maybe unicorn doctor. I must protest! No! No! No!',
+    'In my country we have word for this: gibbelfritz. Means "the machine is angry and will not forgive." Veddy serious.',
+    'Is no good. I look everywhere. The ibbida valve is completely... how you say... dead. Like my dreams of becoming American mechanic of the year.',
   ],
 };
 
