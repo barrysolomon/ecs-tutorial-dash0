@@ -42,6 +42,18 @@ function log(severity, msg, attrs = {}) {
   console.log(JSON.stringify({ level: severity, msg, ...extra, ...attrs }));
 }
 
+// ── RabbitMQ (optional — enabled via ENABLE_MQ=true) ────────────────────────
+const MQ_ENABLED  = (process.env.ENABLE_MQ || '').toLowerCase() === 'true';
+const MQ_ENDPOINT = process.env.MQ_ENDPOINT || '';
+const MQ_USERNAME = process.env.MQ_USERNAME || 'wildrydes';
+const MQ_PASSWORD = process.env.MQ_PASSWORD || '';
+const MQ_EXCHANGE = 'wildrydes.events';
+
+// In-memory stores for ratings and chat (ephemeral — fine for demo)
+const recentRides = new Map();   // rideId → rideDetail
+const ratings     = new Map();   // rideId → { score, comment, unicornName, city, timestamp }
+const chatMessages = new Map();  // rideId → [{ from, message, timestamp }]
+
 // ── AWS services (optional — enabled via ENABLE_AWS_SERVICES=true) ──────────
 const AWS_ENABLED = (process.env.ENABLE_AWS_SERVICES || '').toLowerCase() === 'true';
 const AWS_REGION  = process.env.AWS_REGION || 'eu-west-1';
@@ -59,6 +71,31 @@ if (AWS_ENABLED) {
   console.log('AWS services DISABLED — set ENABLE_AWS_SERVICES=true to enable DynamoDB/S3');
 }
 
+// ── Latka's Maintenance Shop (configurable chaos) ──────────────────────────
+const LATKA_ERROR_RATE = parseFloat(process.env.LATKA_ERROR_RATE ?? '0.15');
+const LATKA_SLOW_RATE  = parseFloat(process.env.LATKA_SLOW_RATE ?? '0.20');
+const LATKA_SLOW_MS    = parseInt(process.env.LATKA_SLOW_MS ?? '2000', 10);
+
+const LATKA_QUOTES = {
+  ok: [
+    'I check the horn, adjust the sparkle. Is okay now. Very good.',
+    'Everything running smooth like butter. Latka approve.',
+    'I give full inspection. This unicorn, top condition. Number one.',
+  ],
+  slow: [
+    'Hmm, this one make funny noise. I look more careful... Ah, is just the glitter filter. I clean, is fine now.',
+    'I must do deep diagnostic. Take little bit longer... okay, found it. Small crack in rainbow refractor. I fix.',
+    'This unicorn need extra attention. I run full sparkle diagnostic... Okay, is all good now. Just needed tune-up.',
+  ],
+  error: [
+    'Is broken. Part on backorder from old country. I call my cousin, he maybe have one.',
+    'Oh no. The shimmer capacitor is kaput. I never see this before. Very bad.',
+    'I try fix but this beyond Latka skill. Need specialist. Maybe unicorn doctor.',
+  ],
+};
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
 // ── HTTP server ────────────────────────────────────────────────────────────
 const http  = require('http');
 const https = require('https');
@@ -66,6 +103,15 @@ const https = require('https');
 const tracer = trace.getTracer('dash0-demo');
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch (e) { resolve({}); } });
+    req.on('error', reject);
+  });
+}
 
 function httpGet(url) {
   return new Promise((resolve, reject) => {
@@ -314,6 +360,105 @@ const ROUTES = {
     res.end(JSON.stringify({ jobId, tasks: 10, status: 'done' }));
   },
 
+  // ── Recent rides received from RabbitMQ ───────────────────────────────────
+  'GET /api/rides/recent': async (req, res) => {
+    const rides = Array.from(recentRides.values()).slice(-50).reverse();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ rides, count: rides.length }));
+  },
+
+  // ── Submit a rating for a ride ──────────────────────────────────────────
+  'POST /api/ratings': async (req, res) => {
+    const body = await readBody(req);
+    const { rideId, score, comment, unicornName, city } = body;
+    if (!rideId || !score) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'rideId and score are required' }));
+      return;
+    }
+    await tracer.startActiveSpan('submit-rating', async span => {
+      span.setAttribute('ride.id', rideId);
+      span.setAttribute('rating.score', score);
+      span.setAttribute('rating.unicorn', unicornName || 'unknown');
+      const rating = {
+        rideId, score: Math.min(5, Math.max(1, score)),
+        comment: comment || '', unicornName: unicornName || 'unknown',
+        city: city || 'unknown', timestamp: new Date().toISOString(),
+      };
+      ratings.set(rideId, rating);
+      log('INFO', 'Rating submitted', { rideId, score, unicornName });
+      span.end();
+    });
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'saved', rideId }));
+  },
+
+  // ── Get ratings (optionally filtered by unicorn) ─────────────────────────
+  'GET /api/ratings': async (req, res) => {
+    const url = new URL(req.url, `http://localhost`);
+    const unicorn = url.searchParams.get('unicorn');
+    let all = Array.from(ratings.values());
+    if (unicorn) all = all.filter(r => r.unicornName === unicorn);
+    // Calculate averages per unicorn
+    const byUnicorn = {};
+    all.forEach(r => {
+      if (!byUnicorn[r.unicornName]) byUnicorn[r.unicornName] = { total: 0, count: 0 };
+      byUnicorn[r.unicornName].total += r.score;
+      byUnicorn[r.unicornName].count += 1;
+    });
+    const averages = Object.entries(byUnicorn).map(([name, v]) => ({
+      unicorn: name, average: (v.total / v.count).toFixed(1), count: v.count,
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ratings: all, averages, count: all.length }));
+  },
+
+  // ── Send a chat message ─────────────────────────────────────────────────
+  'POST /api/chat': async (req, res) => {
+    const body = await readBody(req);
+    const { rideId, user, message } = body;
+    if (!rideId || !message) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'rideId and message are required' }));
+      return;
+    }
+    await tracer.startActiveSpan('send-chat-message', async span => {
+      span.setAttribute('ride.id', rideId);
+      span.setAttribute('chat.user', user || 'anonymous');
+      if (!chatMessages.has(rideId)) chatMessages.set(rideId, []);
+      const msgs = chatMessages.get(rideId);
+      msgs.push({ from: user || 'anonymous', message, timestamp: new Date().toISOString() });
+      // Auto-reply from support after a short delay
+      const ride = recentRides.get(rideId);
+      const unicornName = ride?.Unicorn?.Name || 'your unicorn';
+      setTimeout(() => {
+        msgs.push({
+          from: 'support',
+          message: `Thanks for riding with ${unicornName}! How was your experience?`,
+          timestamp: new Date().toISOString(),
+        });
+      }, 1500);
+      log('INFO', 'Chat message sent', { rideId, user });
+      span.end();
+    });
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'sent', rideId }));
+  },
+
+  // ── Get chat messages for a ride ────────────────────────────────────────
+  'GET /api/chat': async (req, res) => {
+    const url = new URL(req.url, `http://localhost`);
+    const rideId = url.searchParams.get('rideId');
+    if (!rideId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'rideId query param is required' }));
+      return;
+    }
+    const msgs = chatMessages.get(rideId) || [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ messages: msgs, count: msgs.length }));
+  },
+
   // ── Load generator — call this to auto-fire mixed traffic ─────────────────
   'GET /api/load': async (req, res) => {
     const endpoints = ['/api/order', '/api/order', '/api/order', '/api/slow', '/api/error', '/api/burst'];
@@ -324,10 +469,88 @@ const ROUTES = {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ fired: target }));
   },
+
+  // ── Latka's Unicorn Maintenance Shop ─────────────────────────────────────
+  'POST /maintenance': async (req, res) => {
+    const body = await readBody(req);
+    const unicornName = body.unicornName || 'unknown';
+    const rideId = body.rideId || 'unknown';
+
+    await tracer.startActiveSpan('maintenance-check', async span => {
+      span.setAttribute('maintenance.mechanic', 'Latka Gravas');
+      span.setAttribute('maintenance.unicorn', unicornName);
+      span.setAttribute('maintenance.type', 'post-ride-check');
+      span.setAttribute('ride.id', rideId);
+
+      const mileage = Math.floor(Math.random() * 50000);
+      span.setAttribute('maintenance.mileage', mileage);
+
+      const isError = Math.random() < LATKA_ERROR_RATE;
+      const isSlow = !isError && Math.random() < LATKA_SLOW_RATE;
+
+      if (isError) {
+        const diagnosis = pick(LATKA_QUOTES.error);
+        span.setAttribute('maintenance.diagnosis', diagnosis);
+        span.setAttribute('maintenance.error_code', 'PART_UNAVAILABLE');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: diagnosis });
+        log('ERROR', 'Maintenance check failed', { unicorn: unicornName, rideId, diagnosis });
+        span.end();
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'error', mechanic: 'Latka Gravas', unicorn: unicornName,
+          rideId, diagnosis, errorCode: 'PART_UNAVAILABLE',
+        }));
+        return;
+      }
+
+      // Simulate diagnostic work
+      await tracer.startActiveSpan('unicorn-diagnostics', async diagSpan => {
+        diagSpan.setAttribute('maintenance.unicorn', unicornName);
+        diagSpan.setAttribute('maintenance.mileage', mileage);
+
+        const delay = isSlow ? LATKA_SLOW_MS : Math.floor(20 + Math.random() * 30);
+        await sleep(delay);
+
+        if (isSlow) {
+          diagSpan.setAttribute('maintenance.service_time', 'extended');
+          span.setAttribute('maintenance.service_time', 'extended');
+        }
+        diagSpan.end();
+      });
+
+      const diagnosis = isSlow ? pick(LATKA_QUOTES.slow) : pick(LATKA_QUOTES.ok);
+      span.setAttribute('maintenance.diagnosis', diagnosis);
+      log('INFO', 'Maintenance check complete', { unicorn: unicornName, rideId, diagnosis, isSlow });
+
+      span.end();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok', mechanic: 'Latka Gravas', unicorn: unicornName,
+        rideId, diagnosis, mileage, nextService: isSlow ? '200 miles' : '500 miles',
+        ...(isSlow ? { serviceTime: 'extended' } : {}),
+      }));
+    });
+  },
+};
+
+// ── CORS headers ────────────────────────────────────────────────────────────
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, traceparent, tracestate',
 };
 
 // ── Route table ────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS_HEADERS);
+    res.end();
+    return;
+  }
+  // Add CORS to all responses
+  Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+
   const key = `${req.method} ${req.url.split('?')[0]}`;
   const handler = ROUTES[key];
   if (handler) {
@@ -343,25 +566,104 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ── RabbitMQ consumer ───────────────────────────────────────────────────────
+let mqConnection = null;
+
+async function startMQConsumer() {
+  if (!MQ_ENABLED || !MQ_ENDPOINT) return;
+  const amqp = require('amqplib');
+  const url = MQ_ENDPOINT.replace('amqps://', `amqps://${MQ_USERNAME}:${encodeURIComponent(MQ_PASSWORD)}@`);
+
+  try {
+    mqConnection = await amqp.connect(url);
+    const ch = await mqConnection.createChannel();
+    await ch.assertExchange(MQ_EXCHANGE, 'topic', { durable: true });
+    await ch.assertQueue('ride-completed', { durable: true });
+    await ch.assertQueue('chat-messages', { durable: true });
+    await ch.bindQueue('ride-completed', MQ_EXCHANGE, 'ride.completed');
+    await ch.bindQueue('chat-messages', MQ_EXCHANGE, 'chat.message');
+    ch.prefetch(1);
+
+    ch.consume('ride-completed', (msg) => {
+      if (!msg) return;
+      tracer.startActiveSpan('process-ride-completed', span => {
+        try {
+          const ride = JSON.parse(msg.content.toString());
+          const detail = ride.RideDetail || {};
+          recentRides.set(ride.RideId, detail);
+          span.setAttribute('ride.id', ride.RideId);
+          span.setAttribute('ride.unicorn', detail.Unicorn?.Name || 'unknown');
+          span.setAttribute('ride.city', detail.PickupLocation?.City || 'unknown');
+          span.setAttribute('messaging.system', 'rabbitmq');
+          span.setAttribute('messaging.operation', 'process');
+          log('INFO', 'Ride received from RabbitMQ', {
+            rideId: ride.RideId,
+            unicorn: detail.Unicorn?.Name,
+            city: detail.PickupLocation?.City,
+          });
+        } catch (err) {
+          log('ERROR', 'Failed to process ride message', { error: err.message });
+        }
+        span.end();
+        ch.ack(msg);
+      });
+    });
+
+    ch.consume('chat-messages', (msg) => {
+      if (!msg) return;
+      try {
+        const data = JSON.parse(msg.content.toString());
+        if (data.rideId && data.message) {
+          if (!chatMessages.has(data.rideId)) chatMessages.set(data.rideId, []);
+          chatMessages.get(data.rideId).push({
+            from: data.user || 'anonymous',
+            message: data.message,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        log('ERROR', 'Failed to process chat message', { error: err.message });
+      }
+      ch.ack(msg);
+    });
+
+    mqConnection.on('close', () => { mqConnection = null; log('WARN', 'RabbitMQ connection closed'); });
+    mqConnection.on('error', (err) => { mqConnection = null; log('ERROR', 'RabbitMQ error', { error: err.message }); });
+
+    log('INFO', 'RabbitMQ consumer started', { exchange: MQ_EXCHANGE, queues: ['ride-completed', 'chat-messages'] });
+  } catch (err) {
+    log('ERROR', 'Failed to connect to RabbitMQ', { error: err.message, endpoint: MQ_ENDPOINT });
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   log('INFO', `Dash0 demo app listening`, { port: PORT });
   console.log(`
   Endpoints:
-    GET /health         — health check (no trace)
-    GET /api/order      — order flow (+ DynamoDB/S3 if AWS enabled)
-    GET /api/inventory  — scan orders + S3 report (AWS-only)
-    GET /api/slow       — slow query (latency spike)
-    GET /api/error      — error span + ERROR log
-    GET /api/fetch      — outbound HTTP call (multi-service trace)
-    GET /api/burst      — 10 parallel child spans (waterfall demo)
-    GET /api/load       — fires random traffic (use in a loop)
+    GET  /health          — health check (no trace)
+    GET  /api/order       — order flow (+ DynamoDB/S3 if AWS enabled)
+    GET  /api/inventory   — scan orders + S3 report (AWS-only)
+    GET  /api/slow        — slow query (latency spike)
+    GET  /api/error       — error span + ERROR log
+    GET  /api/fetch       — outbound HTTP call (multi-service trace)
+    GET  /api/burst       — 10 parallel child spans (waterfall demo)
+    GET  /api/load        — fires random traffic (use in a loop)
+    GET  /api/rides/recent — recent rides from RabbitMQ
+    POST /api/ratings     — submit a ride rating
+    GET  /api/ratings     — get ratings (optional ?unicorn=Name)
+    POST /api/chat        — send a chat message
+    GET  /api/chat        — get chat history (?rideId=xxx)
   AWS services: ${AWS_ENABLED ? 'ENABLED' : 'DISABLED'}
+  RabbitMQ:     ${MQ_ENABLED ? 'ENABLED' : 'DISABLED'}
   `);
+  // Start MQ consumer after server is listening
+  startMQConsumer();
 });
 
 process.on('SIGTERM', async () => {
   log('INFO', 'SIGTERM received, shutting down');
+  if (mqConnection) { try { await mqConnection.close(); } catch (_) {} }
   await sdk.shutdown();
   process.exit(0);
 });
