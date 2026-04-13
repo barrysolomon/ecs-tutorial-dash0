@@ -56,8 +56,8 @@ processors:
         - 'attributes["url.path"] == "/health"'
 
 exporters:
-  otlp/dash0:
-    endpoint: ${DASH0_OTLP_ENDPOINT}
+  otlphttp/dash0:
+    endpoint: https://${DASH0_OTLP_ENDPOINT}
     headers:
       Authorization: "Bearer ${DASH0_AUTH_TOKEN}"
     retry_on_failure:
@@ -78,15 +78,15 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resourcedetection, filter/health, batch]
-      exporters: [otlp/dash0, debug]
+      exporters: [otlphttp/dash0, debug]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resourcedetection, batch]
-      exporters: [otlp/dash0, debug]
+      exporters: [otlphttp/dash0, debug]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resourcedetection, batch]
-      exporters: [otlp/dash0]
+      exporters: [otlphttp/dash0]
   telemetry:
     logs:
       level: info                    # bumped from warn for demo visibility

@@ -10,7 +10,7 @@
 # Usage:
 #   export DASH0_AUTH_TOKEN=auth_xxxxxxxxxxxxxxxxxxxx
 #   export AWS_REGION=eu-west-1          # or us-east-1, us-west-2
-#   export DASH0_ENDPOINT=ingress.eu-west-1.aws.dash0.com:4317
+#   export DASH0_ENDPOINT=ingress.eu-west-1.aws.dash0.com:4318
 #   ./setup.sh
 # =============================================================================
 set -euo pipefail
@@ -31,13 +31,17 @@ fi
 
 # ── Config (override via env) ─────────────────────────────────────────────────
 REGION="${AWS_REGION:-eu-west-1}"
-DASH0_ENDPOINT="${DASH0_ENDPOINT:-ingress.eu-west-1.aws.dash0.com:4317}"
+DASH0_ENDPOINT="${DASH0_ENDPOINT:-ingress.eu-west-1.aws.dash0.com:4318}"
 DASH0_AUTH_TOKEN="${DASH0_AUTH_TOKEN:?'Set DASH0_AUTH_TOKEN=auth_xxxx'}"
 SERVICE_NAME="dash0-demo"
 CLUSTER_NAME="dash0-demo-cluster"
 PREFIX="dash0demo"
 IMAGE_TAG="latest"
 ENABLE_AWS_SERVICES="${ENABLE_AWS_SERVICES:-false}"
+ENABLE_MQ="${ENABLE_MQ:-false}"
+MQ_ENDPOINT="${MQ_ENDPOINT:-}"
+MQ_USERNAME="${MQ_USERNAME:-wildrydes}"
+MQ_PASSWORD="${MQ_PASSWORD:-}"
 DYNAMO_TABLE="${PREFIX}-orders"
 
 # ── Colours & helpers ─────────────────────────────────────────────────────────
@@ -78,6 +82,10 @@ REGION=${REGION:-}
 ECR_REPO=${ECR_REPO:-}
 LOG_GROUP=${LOG_GROUP:-}
 ENABLE_AWS_SERVICES=${ENABLE_AWS_SERVICES:-}
+ENABLE_MQ=${ENABLE_MQ:-}
+MQ_ENDPOINT=${MQ_ENDPOINT:-}
+MQ_USERNAME=${MQ_USERNAME:-}
+MQ_PASSWORD=${MQ_PASSWORD:-}
 DYNAMO_TABLE=${DYNAMO_TABLE:-}
 S3_BUCKET=${S3_BUCKET:-}
 TASK_ROLE_NAME=${TASK_ROLE_NAME:-}
@@ -637,6 +645,10 @@ _APP_HEALTH_CMD="node -e \"require('http').get('http://localhost:3000/health',r=
 _TASK_DEF_FILE="${TASK_DEF_FILE}" \
 _SCRIPT_DIR="${SCRIPT_DIR}" \
 _ENABLE_AWS_SERVICES="${ENABLE_AWS_SERVICES}" \
+_ENABLE_MQ="${ENABLE_MQ}" \
+_MQ_ENDPOINT="${MQ_ENDPOINT}" \
+_MQ_USERNAME="${MQ_USERNAME}" \
+_MQ_PASSWORD="${MQ_PASSWORD}" \
 _DYNAMO_TABLE="${DYNAMO_TABLE}" \
 _S3_BUCKET="${S3_BUCKET}" \
 _TASK_ROLE_ARN="${TASK_ROLE_ARN:-}" \
@@ -644,6 +656,7 @@ python3 -c '
 import json, os
 
 aws_enabled = os.environ.get("_ENABLE_AWS_SERVICES", "false") == "true"
+mq_enabled = os.environ.get("_ENABLE_MQ", "false") == "true"
 task_role_arn = os.environ.get("_TASK_ROLE_ARN", "")
 
 app_env = [
@@ -660,6 +673,10 @@ app_env = [
     {"name": "AWS_REGION",                    "value": os.environ["_REGION"]},
     {"name": "DYNAMO_TABLE",                  "value": os.environ["_DYNAMO_TABLE"]},
     {"name": "S3_BUCKET",                     "value": os.environ["_S3_BUCKET"]},
+    {"name": "ENABLE_MQ",                     "value": str(mq_enabled).lower()},
+    {"name": "MQ_ENDPOINT",                   "value": os.environ.get("_MQ_ENDPOINT", "")},
+    {"name": "MQ_USERNAME",                   "value": os.environ.get("_MQ_USERNAME", "wildrydes")},
+    {"name": "MQ_PASSWORD",                   "value": os.environ.get("_MQ_PASSWORD", "")},
 ]
 
 task_def = {
@@ -778,6 +795,14 @@ for c in template["containerDefinitions"]:
                 e["value"] = "<DYNAMO_TABLE_NAME>"
             if e["name"] == "S3_BUCKET":
                 e["value"] = "dash0demo-data-<ACCOUNT_ID>-<REGION>"
+            if e["name"] == "ENABLE_MQ":
+                e["value"] = "<true|false>"
+            if e["name"] == "MQ_ENDPOINT":
+                e["value"] = "<AMQPS_ENDPOINT>"
+            if e["name"] == "MQ_USERNAME":
+                e["value"] = "<MQ_USERNAME>"
+            if e["name"] == "MQ_PASSWORD":
+                e["value"] = "<MQ_PASSWORD>"
 if "taskRoleArn" in template:
     template["taskRoleArn"] = "arn:aws:iam::<ACCOUNT_ID>:role/<TASK_ROLE_NAME>"
 
@@ -894,6 +919,12 @@ if [[ "${ENABLE_AWS_SERVICES}" == "true" ]]; then
     echo -e "  ${DIM}  └─${NC} S3:       ${C}${S3_BUCKET}${NC}"
 else
     echo -e "  ${BOLD}AWS services:${NC}  ${Y}DISABLED${NC} ${DIM}(set ENABLE_AWS_SERVICES=true to enable)${NC}"
+fi
+if [[ "${ENABLE_MQ}" == "true" ]]; then
+    echo -e "  ${BOLD}RabbitMQ:${NC}      ${G}ENABLED${NC}"
+    echo -e "  ${DIM}  └─${NC} Endpoint: ${C}${MQ_ENDPOINT}${NC}"
+else
+    echo -e "  ${BOLD}RabbitMQ:${NC}      ${Y}DISABLED${NC} ${DIM}(set ENABLE_MQ=true + MQ_ENDPOINT to enable)${NC}"
 fi
 echo ""
 echo -e "  ${Y}Fire a burst:${NC}  ./scripts/fire.sh http://${ALB_DNS}"
