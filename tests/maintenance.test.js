@@ -133,3 +133,77 @@ describe('ECS /maintenance endpoint', () => {
     assert.ok(slows > 5, `Expected some slow responses, got ${slows}`);
   });
 });
+
+const LOUIE_DIAGNOSIS = {
+  skippedInspection: 'Somebody skip the pre-ride inspection. I wonder who... LOUIE!',
+  tireCondition: 'Louie send this unicorn out with bald hooves AGAIN?! I tell him last week! Aye yi yi...',
+  oilChangeMiles: (n) => `${n.toLocaleString()} miles since oil change?! In my country, Louie would be in big trouble. BIG trouble.`,
+  ridesToday: (n) => `This unicorn do ${n} rides today! Is not machine, is living creature! Louie have no heart.`,
+  sparkleFluid: 'Who put discount sparkle fluid in here? Horn is flickering! Veddy dangerous! LOUIE!',
+};
+
+function buildLouieDiagnosis(dispatchContext) {
+  const issues = Object.keys(dispatchContext).filter(k => k !== 'louie_says');
+  const parts = issues.map(key => {
+    const template = LOUIE_DIAGNOSIS[key];
+    if (typeof template === 'function') return template(dispatchContext[key]);
+    return template;
+  });
+  if (parts.length >= 2) {
+    return parts.join(' AND ') + ' I must protest! No! No! No!';
+  }
+  return parts[0] || '';
+}
+
+function buildLouieError(dispatchContext) {
+  const firstKey = Object.keys(dispatchContext).filter(k => k !== 'louie_says')[0];
+  const issueText = {
+    skippedInspection: 'skip inspection',
+    tireCondition: 'use bald hooves',
+    oilChangeMiles: 'ignore oil change',
+    ridesToday: 'overwork the unicorn',
+    sparkleFluid: 'use discount sparkle fluid',
+  }[firstKey] || 'cut corners';
+  return `Is broken BECAUSE Louie ${issueText}. The shimmer capacitor is kaput. I tell him this would happen! Nobody listen to Latka. Tenk you veddy much.`;
+}
+
+describe('Latka responds to Louie corner-cuts', () => {
+  it('single corner-cut produces deterministic diagnosis', () => {
+    const ctx = { skippedInspection: true, louie_says: ['test'] };
+    const diagnosis = buildLouieDiagnosis(ctx);
+    assert.equal(diagnosis, 'Somebody skip the pre-ride inspection. I wonder who... LOUIE!');
+  });
+
+  it('stacked corner-cuts joined with AND, ends with protest', () => {
+    const ctx = { tireCondition: 'bald', oilChangeMiles: 42000, louie_says: ['q1', 'q2'] };
+    const diagnosis = buildLouieDiagnosis(ctx);
+    assert.ok(diagnosis.includes('bald hooves AGAIN'));
+    assert.ok(diagnosis.includes('42,000 miles since oil change'));
+    assert.ok(diagnosis.includes(' AND '));
+    assert.ok(diagnosis.endsWith('I must protest! No! No! No!'));
+  });
+
+  it('oilChangeMiles uses actual value from context', () => {
+    const ctx = { oilChangeMiles: 37500, louie_says: ['Oil is oil'] };
+    const diagnosis = buildLouieDiagnosis(ctx);
+    assert.ok(diagnosis.includes('37,500 miles'));
+  });
+
+  it('ridesToday uses actual value from context', () => {
+    const ctx = { ridesToday: 42, louie_says: ['handle one more'] };
+    const diagnosis = buildLouieDiagnosis(ctx);
+    assert.ok(diagnosis.includes('42 rides today'));
+  });
+
+  it('error with dispatchContext references Louie', () => {
+    const ctx = { skippedInspection: true, louie_says: ['test'] };
+    const errorMsg = buildLouieError(ctx);
+    assert.ok(errorMsg.includes('BECAUSE Louie skip inspection'));
+    assert.ok(errorMsg.includes('Tenk you veddy much'));
+  });
+
+  it('no issues returns empty string', () => {
+    const diagnosis = buildLouieDiagnosis({ louie_says: [] });
+    assert.equal(diagnosis, '');
+  });
+});

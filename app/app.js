@@ -101,6 +101,40 @@ const LATKA_QUOTES = {
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
+// ── Louie-specific diagnoses (deterministic when dispatchContext present) ───
+const LOUIE_DIAGNOSIS = {
+  skippedInspection: 'Somebody skip the pre-ride inspection. I wonder who... LOUIE!',
+  tireCondition: 'Louie send this unicorn out with bald hooves AGAIN?! I tell him last week! Aye yi yi...',
+  oilChangeMiles: (n) => `${n.toLocaleString()} miles since oil change?! In my country, Louie would be in big trouble. BIG trouble.`,
+  ridesToday: (n) => `This unicorn do ${n} rides today! Is not machine, is living creature! Louie have no heart.`,
+  sparkleFluid: 'Who put discount sparkle fluid in here? Horn is flickering! Veddy dangerous! LOUIE!',
+};
+
+function buildLouieDiagnosis(dispatchContext) {
+  const issues = Object.keys(dispatchContext).filter(k => k !== 'louie_says');
+  const parts = issues.map(key => {
+    const template = LOUIE_DIAGNOSIS[key];
+    if (typeof template === 'function') return template(dispatchContext[key]);
+    return template;
+  });
+  if (parts.length >= 2) {
+    return parts.join(' AND ') + ' I must protest! No! No! No!';
+  }
+  return parts[0] || '';
+}
+
+function buildLouieError(dispatchContext) {
+  const firstKey = Object.keys(dispatchContext).filter(k => k !== 'louie_says')[0];
+  const issueText = {
+    skippedInspection: 'skip inspection',
+    tireCondition: 'use bald hooves',
+    oilChangeMiles: 'ignore oil change',
+    ridesToday: 'overwork the unicorn',
+    sparkleFluid: 'use discount sparkle fluid',
+  }[firstKey] || 'cut corners';
+  return `Is broken BECAUSE Louie ${issueText}. The shimmer capacitor is kaput. I tell him this would happen! Nobody listen to Latka. Tenk you veddy much.`;
+}
+
 // ── HTTP server ────────────────────────────────────────────────────────────
 const http  = require('http');
 const https = require('https');
@@ -480,6 +514,7 @@ const ROUTES = {
     const body = await readBody(req);
     const unicornName = body.unicornName || 'unknown';
     const rideId = body.rideId || 'unknown';
+    const dispatchContext = body.dispatchContext || null;
 
     await tracer.startActiveSpan('maintenance-check', async span => {
       span.setAttribute('maintenance.mechanic', 'Latka Gravas');
@@ -490,11 +525,18 @@ const ROUTES = {
       const mileage = Math.floor(Math.random() * 50000);
       span.setAttribute('maintenance.mileage', mileage);
 
+      if (dispatchContext) {
+        const issues = Object.keys(dispatchContext).filter(k => k !== 'louie_says');
+        span.setAttribute('dispatch.corner_cutting', true);
+        span.setAttribute('dispatch.issues', issues.join(','));
+        if (dispatchContext.louie_says) span.setAttribute('dispatch.louie_says', dispatchContext.louie_says[0] || '');
+      }
+
       const isError = Math.random() < LATKA_ERROR_RATE;
       const isSlow = !isError && Math.random() < LATKA_SLOW_RATE;
 
       if (isError) {
-        const diagnosis = pick(LATKA_QUOTES.error);
+        const diagnosis = dispatchContext ? buildLouieError(dispatchContext) : pick(LATKA_QUOTES.error);
         span.setAttribute('maintenance.diagnosis', diagnosis);
         span.setAttribute('maintenance.error_code', 'PART_UNAVAILABLE');
         span.setStatus({ code: SpanStatusCode.ERROR, message: diagnosis });
@@ -523,7 +565,9 @@ const ROUTES = {
         diagSpan.end();
       });
 
-      const diagnosis = isSlow ? pick(LATKA_QUOTES.slow) : pick(LATKA_QUOTES.ok);
+      const diagnosis = dispatchContext
+        ? buildLouieDiagnosis(dispatchContext)
+        : (isSlow ? pick(LATKA_QUOTES.slow) : pick(LATKA_QUOTES.ok));
       span.setAttribute('maintenance.diagnosis', diagnosis);
       log('INFO', 'Maintenance check complete', { unicorn: unicornName, rideId, diagnosis, isSlow });
 
