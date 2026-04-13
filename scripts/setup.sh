@@ -33,7 +33,7 @@ fi
 REGION="${AWS_REGION:-eu-west-1}"
 DASH0_ENDPOINT="${DASH0_ENDPOINT:-ingress.eu-west-1.aws.dash0.com:4318}"
 DASH0_AUTH_TOKEN="${DASH0_AUTH_TOKEN:?'Set DASH0_AUTH_TOKEN=auth_xxxx'}"
-SERVICE_NAME="dash0-demo"
+SERVICE_NAME="latkas-garage"
 CLUSTER_NAME="dash0-demo-cluster"
 PREFIX="dash0demo"
 IMAGE_TAG="latest"
