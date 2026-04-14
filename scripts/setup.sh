@@ -339,7 +339,7 @@ elif [[ "${DB_STATUS}" == "not-found" ]]; then
         --db-instance-identifier "${DB_INSTANCE_ID}" \
         --db-instance-class db.t3.micro \
         --engine postgres \
-        --engine-version "16.4" \
+        --engine-version "16.13" \
         --master-username "${DB_USER}" \
         --master-user-password "${DB_PASSWORD}" \
         --db-name "${DB_NAME}" \
@@ -783,7 +783,7 @@ app_env = [
     {"name": "MQ_PASSWORD",                   "value": os.environ.get("_MQ_PASSWORD", "")},
 ]
 
-# Latka's maintenance database (RDS PostgreSQL)
+# Latka maintenance database (RDS PostgreSQL)
 db_host = os.environ.get("_DB_HOST", "")
 if db_host:
     app_env.extend([

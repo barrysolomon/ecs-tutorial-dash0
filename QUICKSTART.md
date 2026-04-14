@@ -89,7 +89,7 @@ curl http://<ALB_DNS>/api/fetch      # outbound HTTP with trace propagation
 ./scripts/teardown.sh
 ```
 
-Deletes all AWS resources created by `setup.sh`, including DynamoDB table and S3 bucket if they were created.
+Deletes all AWS resources created by `setup.sh`, including DynamoDB table and S3 bucket if they were created. Security groups and subnets are retried with backoff (up to 90s) to handle the AWS race condition where ENIs report as released but underlying dependencies haven't fully detached yet.
 
 ## Next Steps
 

@@ -78,14 +78,14 @@ let dbPool = null;
 if (DB_ENABLED) {
   const { Pool } = require('pg');
   const dbConfig = process.env.DATABASE_URL
-    ? { connectionString: process.env.DATABASE_URL, ssl: false }
+    ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
     : {
         host: process.env.DB_HOST,
         port: parseInt(process.env.DB_PORT || '5432', 10),
         database: process.env.DB_NAME || 'latkas_garage',
         user: process.env.DB_USER || 'latka',
         password: process.env.DB_PASSWORD || '',
-        ssl: false,
+        ssl: { rejectUnauthorized: false },
       };
   dbPool = new Pool({ ...dbConfig, max: 5, idleTimeoutMillis: 30000 });
   console.log(`Maintenance DB ENABLED — ${dbConfig.host || 'via DATABASE_URL'}`);

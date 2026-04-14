@@ -91,7 +91,7 @@ ecs-demo/
 ├── scripts/
 │   ├── tutorial.sh                     # ← Start here. Interactive guided walkthrough
 │   ├── setup.sh                        # Creates all AWS infra + deploys to ECS Fargate
-│   ├── teardown.sh                     # Deletes everything cleanly
+│   ├── teardown.sh                     # Deletes everything cleanly (retries for AWS race conditions)
 │   └── fire.sh                         # Traffic generator for demo scenarios
 ├── QUICKSTART.md                       # Minimal step-by-step (no interactive wrapper)
 ├── ARCHITECTURE.md                     # Architecture deep dive + decision framework
@@ -155,6 +155,7 @@ curl http://<ALB_DNS>/api/fetch      # outbound HTTP
 #    app.dash0.com → Services → dash0-demo
 
 # 5. Teardown (cleans up DynamoDB/S3 too if created)
+#    Retries SG/subnet deletes to handle AWS ENI release race conditions
 ./scripts/teardown.sh
 ```
 
@@ -201,6 +202,45 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full decision framework, collecto
 - **Show the metadata enrichment.** Point out automatic ECS resource attributes (cluster ARN, task ARN, AZ) that the `resourcedetection` processor adds — this is the key sidecar differentiator.
 - **Trace → Log correlation.** Click a trace in Dash0, then show correlated logs in the side panel — this is the "aha" moment for ECS teams.
 - **"Why not just CloudWatch?"** The collector gives a single pipeline for traces, logs, and metrics to one backend. CloudWatch + X-Ray = two systems, two UIs, manual correlation.
+
+## RabbitMQ Integration (Wild Rydes Bridge)
+
+The ECS demo can connect to the [Wild Rydes serverless demo](../../Serverless/wildrydes/) via Amazon MQ (RabbitMQ), creating cross-service distributed traces that span Lambda and ECS.
+
+### How it works
+
+1. Wild Rydes Lambda (`requestUnicorn`) publishes ride events to RabbitMQ with OTel trace context in AMQP headers
+2. ECS app consumes from RabbitMQ, auto-extracting trace context via `@opentelemetry/instrumentation-amqplib`
+3. Website shows a rating form and chat widget that call ECS directly (browser → ALB)
+
+### New endpoints (when MQ enabled)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/rides/recent` | GET | Recent rides received from RabbitMQ |
+| `/api/ratings` | POST | Submit a ride rating `{ rideId, score, comment, unicornName }` |
+| `/api/ratings` | GET | Get ratings (optional `?unicorn=Name` filter) |
+| `/api/chat` | POST | Send a chat message `{ rideId, user, message }` |
+| `/api/chat` | GET | Get chat history `?rideId=xxx` |
+
+### Deployment
+
+```bash
+# Deploy Wild Rydes with MQ first
+cd ../Serverless/wildrydes && ENABLE_MQ=true ./scripts/setup.sh
+
+# Get MQ endpoint from Wild Rydes .state file, then deploy ECS
+ENABLE_MQ=true MQ_ENDPOINT=amqps://b-xxx.mq.region.amazonaws.com:5671 \
+  MQ_USERNAME=wildrydes MQ_PASSWORD=xxx ./scripts/setup.sh
+```
+
+### Trace waterfall in Dash0
+
+```
+Browser POST /ride → Lambda → RabbitMQ → ECS process-ride-completed
+Browser POST /api/ratings → ECS submit-rating
+Browser POST /api/chat → ECS send-chat-message
+```
 
 ## Further Reading
 

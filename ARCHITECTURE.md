@@ -311,6 +311,18 @@ Direct Export  ──→  Validate in Dash0  ──→  Add Sidecar Collector
 
 ---
 
+## Teardown: AWS ENI Race Condition
+
+When tearing down ECS infrastructure, there's a well-known AWS race condition: `describe-network-interfaces` reports 0 ENIs in the subnets, but AWS hasn't fully released the underlying dependencies from security groups and subnets. Single-shot deletes hit this window and fail.
+
+The teardown script handles this with:
+
+1. **SGs delete before subnets** — security groups have dependencies on ENIs; subnets depend on SGs being gone. Order matters.
+2. **Retry with backoff** — up to 6 attempts with 15-second waits (90s total) for each resource group, instead of a single fire-and-fail.
+3. **Idempotent retries** — if a resource was already deleted, the retry loop treats it as success and moves on.
+
+---
+
 ## References
 
 - [OTel Collector resourcedetection — ECS detector](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/resourcedetectionprocessor/README.md)

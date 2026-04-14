@@ -1,5 +1,5 @@
 {
-  "family": "dash0-demo",
+  "family": "latkas-garage",
   "networkMode": "awsvpc",
   "requiresCompatibilities": [
     "FARGATE"
@@ -76,6 +76,42 @@
         {
           "name": "S3_BUCKET",
           "value": "dash0demo-data-<ACCOUNT_ID>-<REGION>"
+        },
+        {
+          "name": "ENABLE_MQ",
+          "value": "<true|false>"
+        },
+        {
+          "name": "MQ_ENDPOINT",
+          "value": "<AMQPS_ENDPOINT>"
+        },
+        {
+          "name": "MQ_USERNAME",
+          "value": "<MQ_USERNAME>"
+        },
+        {
+          "name": "MQ_PASSWORD",
+          "value": "<MQ_PASSWORD>"
+        },
+        {
+          "name": "DB_HOST",
+          "value": "dash0demo-latkas-garage.cye2fdlbx8dy.us-west-2.rds.amazonaws.com"
+        },
+        {
+          "name": "DB_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "DB_NAME",
+          "value": "latkas_garage"
+        },
+        {
+          "name": "DB_USER",
+          "value": "latka"
+        },
+        {
+          "name": "DB_PASSWORD",
+          "value": "LatkaGravas2024!"
         }
       ],
       "logConfiguration": {
@@ -153,6 +189,5 @@
         }
       }
     }
-  ],
-  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/<TASK_ROLE_NAME>"
+  ]
 }
