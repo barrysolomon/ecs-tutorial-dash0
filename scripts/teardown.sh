@@ -228,9 +228,30 @@ fi
 aws ec2 delete-route-table --route-table-id "${RT_ID}" --region "${REGION}" &>/dev/null \
     && ok "Route table deleted" || warn "Route table may already be deleted"
 
+step "Deleting RDS PostgreSQL (Latka's garage DB)"
+if [[ -n "${DB_INSTANCE_ID:-}" ]]; then
+    aws rds delete-db-instance \
+        --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --skip-final-snapshot --delete-automated-backups \
+        --region "${REGION}" &>/dev/null \
+        && echo -e "${DIM}    Waiting for RDS instance to be deleted...${NC}" \
+        || warn "RDS instance may already be deleted"
+    aws rds wait db-instance-deleted \
+        --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" &>/dev/null || true
+    ok "RDS instance deleted: ${DB_INSTANCE_ID}"
+    aws rds delete-db-subnet-group \
+        --db-subnet-group-name "${PREFIX:-dash0demo}-db-subnets" \
+        --region "${REGION}" &>/dev/null || true
+    ok "DB subnet group deleted"
+else
+    warn "No DB_INSTANCE_ID in .state — skipping RDS"
+fi
+
 step "Deleting security groups"
 for attempt in 1 2 3 4 5 6; do
     SG_FAIL=0
+    [[ -n "${DB_SG:-}" ]] && aws ec2 delete-security-group --group-id "${DB_SG}" --region "${REGION}" &>/dev/null 2>&1 && ok "DB SG deleted" || true
     aws ec2 delete-security-group --group-id "${APP_SG}" --region "${REGION}" &>/dev/null 2>&1 && ok "App SG deleted" || SG_FAIL=$((SG_FAIL + 1))
     aws ec2 delete-security-group --group-id "${ALB_SG}" --region "${REGION}" &>/dev/null 2>&1 && ok "ALB SG deleted" || SG_FAIL=$((SG_FAIL + 1))
     if (( SG_FAIL == 0 )); then break; fi

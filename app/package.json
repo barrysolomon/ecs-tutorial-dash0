@@ -17,6 +17,9 @@
     "@opentelemetry/sdk-node": "^0.56.0",
     "@opentelemetry/semantic-conventions": "^1.29.0",
     "@aws-sdk/client-dynamodb": "^3.700.0",
-    "@aws-sdk/client-s3": "^3.700.0"
+    "@aws-sdk/client-s3": "^3.700.0",
+    "amqplib": "^0.10.4",
+    "@opentelemetry/instrumentation-amqplib": "^0.42.0",
+    "pg": "^8.13.0"
   }
 }

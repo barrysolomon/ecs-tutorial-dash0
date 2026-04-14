@@ -71,6 +71,102 @@ if (AWS_ENABLED) {
   console.log('AWS services DISABLED — set ENABLE_AWS_SERVICES=true to enable DynamoDB/S3');
 }
 
+// ── Latka's Maintenance Database (RDS PostgreSQL) ─────────────────────────
+const DB_ENABLED = !!(process.env.DATABASE_URL || process.env.DB_HOST);
+let dbPool = null;
+
+if (DB_ENABLED) {
+  const { Pool } = require('pg');
+  const dbConfig = process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL, ssl: false }
+    : {
+        host: process.env.DB_HOST,
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        database: process.env.DB_NAME || 'latkas_garage',
+        user: process.env.DB_USER || 'latka',
+        password: process.env.DB_PASSWORD || '',
+        ssl: false,
+      };
+  dbPool = new Pool({ ...dbConfig, max: 5, idleTimeoutMillis: 30000 });
+  console.log(`Maintenance DB ENABLED — ${dbConfig.host || 'via DATABASE_URL'}`);
+} else {
+  console.log('Maintenance DB DISABLED — set DB_HOST to enable RDS record-keeping');
+}
+
+async function initMaintenanceSchema() {
+  if (!dbPool) return;
+  try {
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS maintenance_records (
+        id SERIAL PRIMARY KEY,
+        ride_id VARCHAR(64) NOT NULL,
+        unicorn_name VARCHAR(64) NOT NULL,
+        mechanic VARCHAR(64) DEFAULT 'Latka Gravas',
+        mileage INTEGER,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        diagnosis TEXT,
+        service_time VARCHAR(20),
+        dispatch_issues TEXT,
+        louie_override BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS parts_used (
+        id SERIAL PRIMARY KEY,
+        record_id INTEGER REFERENCES maintenance_records(id),
+        part_name VARCHAR(128) NOT NULL,
+        part_number VARCHAR(32),
+        quantity INTEGER DEFAULT 1,
+        condition VARCHAR(32) DEFAULT 'new',
+        notes TEXT
+      );
+      CREATE TABLE IF NOT EXISTS mechanic_comments (
+        id SERIAL PRIMARY KEY,
+        record_id INTEGER REFERENCES maintenance_records(id),
+        mechanic VARCHAR(64) DEFAULT 'Latka Gravas',
+        comment TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_maintenance_unicorn ON maintenance_records(unicorn_name);
+      CREATE INDEX IF NOT EXISTS idx_maintenance_ride ON maintenance_records(ride_id);
+    `);
+    console.log('Maintenance DB schema initialized');
+  } catch (err) {
+    console.error('Failed to initialize maintenance DB schema:', err.message);
+  }
+}
+
+const GARAGE_PARTS = [
+  { part_name: 'Shimmer Capacitor', part_number: 'SC-4401', condition: 'refurbished' },
+  { part_name: 'Rainbow Refractor', part_number: 'RR-7720', condition: 'new' },
+  { part_name: 'Sparkle Fluid Filter', part_number: 'SFF-100', condition: 'new' },
+  { part_name: 'Horn Alignment Gauge', part_number: 'HAG-03', condition: 'calibrated' },
+  { part_name: 'Hoof Grip Pad (set of 4)', part_number: 'HGP-4S', condition: 'new' },
+  { part_name: 'Mane Detangler Nozzle', part_number: 'MDN-22', condition: 'used' },
+  { part_name: 'Tail Light Crystal', part_number: 'TLC-88', condition: 'polished' },
+  { part_name: 'Glitter Injection Valve', part_number: 'GIV-55', condition: 'new' },
+  { part_name: 'Cloud Traction Module', part_number: 'CTM-12', condition: 'refurbished' },
+  { part_name: 'Ibbida Valve', part_number: 'IV-0001', condition: 'rare import' },
+];
+
+const LATKA_COMMENTS_OK = [
+  'Everything check out. Veddy nice unicorn. I give A+.',
+  'Oil good, sparkle fluid good, hooves good. Ready for next ride!',
+  'I run full diagnostic. All systems nominal. Is beautiful machine.',
+  'Mileage is getting up there but this unicorn still veddy strong.',
+  'I tighten the rainbow refractor and top off sparkle fluid. Good to go!',
+];
+const LATKA_COMMENTS_WARN = [
+  'Horn alignment little bit off. I fix but keep eye on it.',
+  'Sparkle fluid running low. Louie should order more but he cheap.',
+  'I notice small crack in cloud traction module. Not urgent but schedule follow-up.',
+  'Mane detangler needs replacement soon. Maybe 200 more miles.',
+];
+const LATKA_COMMENTS_ERROR = [
+  'This unicorn should NOT be on road. I file formal complaint with management.',
+  'Louie will hear about this. I document everything. EVERYTHING.',
+  'Major safety issue. I refuse to sign off on this. Latka has standards.',
+];
+
 // ── Latka's Maintenance Shop (configurable chaos) ──────────────────────────
 const LATKA_ERROR_RATE = parseFloat(process.env.LATKA_ERROR_RATE ?? '0.15');
 const LATKA_SLOW_RATE  = parseFloat(process.env.LATKA_SLOW_RATE ?? '0.20');
@@ -540,12 +636,34 @@ const ROUTES = {
         span.setAttribute('maintenance.diagnosis', diagnosis);
         span.setAttribute('maintenance.error_code', 'PART_UNAVAILABLE');
         span.setStatus({ code: SpanStatusCode.ERROR, message: diagnosis });
-        log('ERROR', 'Maintenance check failed', { unicorn: unicornName, rideId, diagnosis });
+
+        // Record the rejection in the database
+        let recordId = null;
+        if (dbPool) {
+          try {
+            const issues = dispatchContext ? Object.keys(dispatchContext).filter(k => k !== 'louie_says').join(',') : null;
+            const result = await dbPool.query(
+              `INSERT INTO maintenance_records (ride_id, unicorn_name, mileage, status, diagnosis, dispatch_issues, louie_override)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+              [rideId, unicornName, mileage, 'rejected', diagnosis, issues, !!(dispatchContext)]
+            );
+            recordId = result.rows[0].id;
+            await dbPool.query(
+              `INSERT INTO mechanic_comments (record_id, mechanic, comment) VALUES ($1, $2, $3)`,
+              [recordId, 'Latka Gravas', pick(LATKA_COMMENTS_ERROR)]
+            );
+          } catch (err) {
+            log('WARN', 'Failed to record rejection', { error: err.message });
+          }
+        }
+
+        log('ERROR', 'Maintenance check failed', { unicorn: unicornName, rideId, diagnosis, recordId });
         span.end();
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'error', mechanic: 'Latka Gravas', unicorn: unicornName,
           rideId, diagnosis, errorCode: 'PART_UNAVAILABLE',
+          ...(recordId ? { recordId } : {}),
         }));
         return;
       }
@@ -569,7 +687,60 @@ const ROUTES = {
         ? buildLouieDiagnosis(dispatchContext)
         : (isSlow ? pick(LATKA_QUOTES.slow) : pick(LATKA_QUOTES.ok));
       span.setAttribute('maintenance.diagnosis', diagnosis);
-      log('INFO', 'Maintenance check complete', { unicorn: unicornName, rideId, diagnosis, isSlow });
+
+      // Write maintenance record to PostgreSQL (auto-instrumented → pg.query spans)
+      let recordId = null;
+      if (dbPool) {
+        await tracer.startActiveSpan('write-maintenance-record', async dbSpan => {
+          dbSpan.setAttribute('db.system', 'postgresql');
+          dbSpan.setAttribute('maintenance.unicorn', unicornName);
+          dbSpan.setAttribute('ride.id', rideId);
+          try {
+            const serviceTime = isSlow ? 'extended' : 'standard';
+            const issues = dispatchContext ? Object.keys(dispatchContext).filter(k => k !== 'louie_says').join(',') : null;
+            const result = await dbPool.query(
+              `INSERT INTO maintenance_records (ride_id, unicorn_name, mileage, status, diagnosis, service_time, dispatch_issues, louie_override)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+              [rideId, unicornName, mileage, 'approved', diagnosis, serviceTime, issues, !!(dispatchContext)]
+            );
+            recordId = result.rows[0].id;
+            dbSpan.setAttribute('db.record_id', recordId);
+
+            // Log parts used during service
+            const numParts = Math.floor(Math.random() * 3) + (isSlow ? 2 : 1);
+            const shuffled = [...GARAGE_PARTS].sort(() => Math.random() - 0.5);
+            const partsUsed = shuffled.slice(0, numParts);
+            for (const part of partsUsed) {
+              await dbPool.query(
+                `INSERT INTO parts_used (record_id, part_name, part_number, quantity, condition, notes)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [recordId, part.part_name, part.part_number, 1, part.condition,
+                 isSlow ? 'Required extra attention' : null]
+              );
+            }
+            dbSpan.setAttribute('maintenance.parts_count', numParts);
+
+            // Add mechanic comment
+            const comment = dispatchContext
+              ? pick(LATKA_COMMENTS_WARN)
+              : (isSlow ? pick(LATKA_COMMENTS_WARN) : pick(LATKA_COMMENTS_OK));
+            await dbPool.query(
+              `INSERT INTO mechanic_comments (record_id, mechanic, comment)
+               VALUES ($1, $2, $3)`,
+              [recordId, 'Latka Gravas', comment]
+            );
+            dbSpan.setAttribute('maintenance.comment', comment);
+
+            log('INFO', 'Maintenance record saved', { recordId, unicorn: unicornName, rideId, parts: numParts });
+          } catch (err) {
+            dbSpan.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+            log('ERROR', 'Failed to save maintenance record', { error: err.message, unicorn: unicornName });
+          }
+          dbSpan.end();
+        });
+      }
+
+      log('INFO', 'Maintenance check complete', { unicorn: unicornName, rideId, diagnosis, isSlow, recordId });
 
       span.end();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -577,6 +748,7 @@ const ROUTES = {
         status: 'ok', mechanic: 'Latka Gravas', unicorn: unicornName,
         rideId, diagnosis, mileage, nextService: isSlow ? '200 miles' : '500 miles',
         ...(isSlow ? { serviceTime: 'extended' } : {}),
+        ...(recordId ? { recordId } : {}),
       }));
     });
   },
@@ -686,8 +858,9 @@ async function startMQConsumer() {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   log('INFO', `Dash0 demo app listening`, { port: PORT });
+  await initMaintenanceSchema();
   console.log(`
   Endpoints:
     GET  /health          — health check (no trace)

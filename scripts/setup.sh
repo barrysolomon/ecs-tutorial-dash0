@@ -89,6 +89,13 @@ MQ_PASSWORD=${MQ_PASSWORD:-}
 DYNAMO_TABLE=${DYNAMO_TABLE:-}
 S3_BUCKET=${S3_BUCKET:-}
 TASK_ROLE_NAME=${TASK_ROLE_NAME:-}
+DB_SG=${DB_SG:-}
+DB_ENDPOINT=${DB_ENDPOINT:-}
+DB_PORT=${DB_PORT:-}
+DB_NAME=${DB_NAME:-}
+DB_USER=${DB_USER:-}
+DB_PASSWORD=${DB_PASSWORD:-}
+DB_INSTANCE_ID=${DB_INSTANCE_ID:-}
 STATEOF
 }
 
@@ -274,6 +281,98 @@ else
     aws ec2 create-tags --resources "${APP_SG}" \
         --tags Key=Name,Value="${PREFIX}-app-sg"
     ok "Security groups: ALB=${ALB_SG}, App=${APP_SG}"
+fi
+save_state
+
+# ─────────────────────────────────────────────────────────────────────────────
+step "4b/10  Creating RDS PostgreSQL (Latka's maintenance records)"
+# ─────────────────────────────────────────────────────────────────────────────
+DB_INSTANCE_ID="${PREFIX}-latkas-garage"
+DB_NAME="latkas_garage"
+DB_USER="latka"
+DB_PASSWORD="${DB_PASSWORD:-LatkaGravas2024!}"
+
+# Look up existing DB SG
+if [[ -z "${DB_SG:-}" ]]; then
+    DB_SG=$(aws ec2 describe-security-groups --filters \
+        "Name=group-name,Values=${PREFIX}-db-sg" "Name=vpc-id,Values=${VPC_ID}" \
+        --region "${REGION}" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)
+    [[ "${DB_SG}" == "None" ]] && DB_SG=""
+fi
+
+# Check if RDS instance exists
+DB_STATUS=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+    --region "${REGION}" --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "not-found")
+
+if [[ "${DB_STATUS}" == "available" ]]; then
+    DB_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" --query 'DBInstances[0].Endpoint.Address' --output text)
+    DB_PORT=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" --query 'DBInstances[0].Endpoint.Port' --output text)
+    skip "RDS: ${DB_INSTANCE_ID} → ${DB_ENDPOINT}:${DB_PORT}"
+elif [[ "${DB_STATUS}" == "not-found" ]]; then
+    # Create DB security group
+    if [[ -z "${DB_SG:-}" ]]; then
+        DB_SG=$(aws ec2 create-security-group \
+            --group-name "${PREFIX}-db-sg" \
+            --description "RDS PostgreSQL - access from ECS tasks" \
+            --vpc-id "${VPC_ID}" \
+            --region "${REGION}" \
+            --query 'GroupId' --output text)
+        aws ec2 authorize-security-group-ingress \
+            --group-id "${DB_SG}" --protocol tcp --port 5432 --source-group "${APP_SG}" \
+            --region "${REGION}"
+        aws ec2 create-tags --resources "${DB_SG}" \
+            --tags Key=Name,Value="${PREFIX}-db-sg" --region "${REGION}"
+    fi
+
+    # Create DB subnet group
+    aws rds create-db-subnet-group \
+        --db-subnet-group-name "${PREFIX}-db-subnets" \
+        --db-subnet-group-description "Subnets for Latka's garage DB" \
+        --subnet-ids "${SUBNET1}" "${SUBNET2}" \
+        --region "${REGION}" 2>/dev/null || true
+
+    # Create RDS instance (db.t3.micro — ~$15/month)
+    info "Creating RDS PostgreSQL instance (this may take 3-5 minutes)..."
+    aws rds create-db-instance \
+        --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --db-instance-class db.t3.micro \
+        --engine postgres \
+        --engine-version "16.4" \
+        --master-username "${DB_USER}" \
+        --master-user-password "${DB_PASSWORD}" \
+        --db-name "${DB_NAME}" \
+        --allocated-storage 20 \
+        --vpc-security-group-ids "${DB_SG}" \
+        --db-subnet-group-name "${PREFIX}-db-subnets" \
+        --no-multi-az \
+        --no-publicly-accessible \
+        --backup-retention-period 0 \
+        --storage-type gp3 \
+        --region "${REGION}" \
+        --tags Key=Name,Value="${DB_INSTANCE_ID}" &>/dev/null
+
+    info "Waiting for RDS to become available..."
+    aws rds wait db-instance-available \
+        --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}"
+
+    DB_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" --query 'DBInstances[0].Endpoint.Address' --output text)
+    DB_PORT=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" --query 'DBInstances[0].Endpoint.Port' --output text)
+    ok "RDS: ${DB_INSTANCE_ID} → ${DB_ENDPOINT}:${DB_PORT}"
+else
+    info "RDS instance is in state: ${DB_STATUS} — waiting..."
+    aws rds wait db-instance-available \
+        --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}"
+    DB_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" --query 'DBInstances[0].Endpoint.Address' --output text)
+    DB_PORT=$(aws rds describe-db-instances --db-instance-identifier "${DB_INSTANCE_ID}" \
+        --region "${REGION}" --query 'DBInstances[0].Endpoint.Port' --output text)
+    ok "RDS: ${DB_INSTANCE_ID} → ${DB_ENDPOINT}:${DB_PORT}"
 fi
 save_state
 
@@ -652,6 +751,11 @@ _MQ_PASSWORD="${MQ_PASSWORD}" \
 _DYNAMO_TABLE="${DYNAMO_TABLE}" \
 _S3_BUCKET="${S3_BUCKET}" \
 _TASK_ROLE_ARN="${TASK_ROLE_ARN:-}" \
+_DB_HOST="${DB_ENDPOINT:-}" \
+_DB_PORT="${DB_PORT:-5432}" \
+_DB_NAME="${DB_NAME:-latkas_garage}" \
+_DB_USER="${DB_USER:-latka}" \
+_DB_PASSWORD="${DB_PASSWORD:-}" \
 python3 -c '
 import json, os
 
@@ -678,6 +782,17 @@ app_env = [
     {"name": "MQ_USERNAME",                   "value": os.environ.get("_MQ_USERNAME", "wildrydes")},
     {"name": "MQ_PASSWORD",                   "value": os.environ.get("_MQ_PASSWORD", "")},
 ]
+
+# Latka's maintenance database (RDS PostgreSQL)
+db_host = os.environ.get("_DB_HOST", "")
+if db_host:
+    app_env.extend([
+        {"name": "DB_HOST",     "value": db_host},
+        {"name": "DB_PORT",     "value": os.environ.get("_DB_PORT", "5432")},
+        {"name": "DB_NAME",     "value": os.environ.get("_DB_NAME", "latkas_garage")},
+        {"name": "DB_USER",     "value": os.environ.get("_DB_USER", "latka")},
+        {"name": "DB_PASSWORD", "value": os.environ.get("_DB_PASSWORD", "")},
+    ])
 
 task_def = {
     "family": os.environ["_SERVICE_NAME"],
