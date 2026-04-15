@@ -654,19 +654,19 @@ else
     cat > "$(dirname ${MAINT_ZIP})/index.js" <<'LAMBDAEOF'
 const http = require('http');
 exports.handler = async (event) => {
-  const { unicornName, rideId, traceparent, tracestate, dispatchContext } = event;
+  const { unicornName, rideId, dispatchContext } = event;
   const endpoint = process.env.ECS_ENDPOINT;
   if (!endpoint) return { statusCode: 503, body: { error: 'ECS_ENDPOINT not configured' } };
   const body = JSON.stringify({ unicornName, rideId, dispatchContext: dispatchContext || null });
   const url = new URL('/maintenance', endpoint);
   return new Promise((resolve) => {
+    // NOTE: traceparent/tracestate headers are auto-injected by the Dash0 layer
+    // Do NOT manually set them — the layer handles trace propagation via HTTP auto-instrumentation
     const req = http.request(url, {
       method: 'POST', timeout: 5000,
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
-        ...(traceparent ? { traceparent } : {}),
-        ...(tracestate ? { tracestate } : {}),
       },
     }, (res) => {
       let data = '';
