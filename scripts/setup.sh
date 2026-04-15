@@ -685,6 +685,10 @@ exports.handler = async (event) => {
 LAMBDAEOF
     (cd "$(dirname ${MAINT_ZIP})" && zip -q checkMaintenance.zip index.js)
 
+    # Determine layer ARN for the checkMaintenance Lambda
+    # Uses same Dash0 extension as Wild Rydes but reports to the ECS Dash0 project
+    MAINT_LAYER_ARN="arn:aws:lambda:${REGION}:115813213817:layer:dash0-extension-node:4"
+
     aws lambda create-function \
         --function-name "${CHECK_MAINT_FN}" \
         --runtime nodejs20.x \
@@ -693,11 +697,12 @@ LAMBDAEOF
         --zip-file "fileb://${MAINT_ZIP}" \
         --timeout 10 \
         --memory-size 256 \
-        --environment "Variables={ECS_ENDPOINT=http://${ALB_DNS}}" \
+        --layers "${MAINT_LAYER_ARN}" \
+        --environment "Variables={ECS_ENDPOINT=http://${ALB_DNS},AWS_LAMBDA_EXEC_WRAPPER=/opt/wrapper,DASH0_TOKEN=${DASH0_AUTH_TOKEN},DASH0_ENDPOINT=https://${DASH0_ENDPOINT}}" \
         --region "${REGION}" \
         --query 'FunctionName' --output text &>/dev/null
     rm -rf "$(dirname ${MAINT_ZIP})"
-    ok "Lambda: ${CHECK_MAINT_FN} (dark — no Dash0 layer, forwards traceparent to ECS)"
+    ok "Lambda: ${CHECK_MAINT_FN} (instrumented — Dash0 layer, traces to ECS project)"
 fi
 save_state
 
