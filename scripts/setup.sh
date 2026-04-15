@@ -96,6 +96,8 @@ DB_NAME=${DB_NAME:-}
 DB_USER=${DB_USER:-}
 DB_PASSWORD=${DB_PASSWORD:-}
 DB_INSTANCE_ID=${DB_INSTANCE_ID:-}
+CHECK_MAINT_FN=${CHECK_MAINT_FN:-}
+CHECK_MAINT_ROLE=${CHECK_MAINT_ROLE:-}
 STATEOF
 }
 
@@ -621,6 +623,83 @@ if [[ "${ENABLE_AWS_SERVICES}" == "true" ]]; then
 else
     info "AWS services disabled (set ENABLE_AWS_SERVICES=true to create DynamoDB/S3)"
 fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+step "7c/10  Creating checkMaintenance Lambda (dark — uninstrumented bridge to ECS)"
+# ─────────────────────────────────────────────────────────────────────────────
+CHECK_MAINT_FN="latkas-garage-checkMaintenance"
+CHECK_MAINT_ROLE="${PREFIX}-checkMaintenance-role"
+
+# Check if function already exists
+if aws lambda get-function --function-name "${CHECK_MAINT_FN}" --region "${REGION}" &>/dev/null; then
+    skip "Lambda: ${CHECK_MAINT_FN}"
+else
+    # Create IAM role for the Lambda
+    CHECK_MAINT_ROLE_ARN=$(aws iam get-role --role-name "${CHECK_MAINT_ROLE}" \
+        --query 'Role.Arn' --output text 2>/dev/null || true)
+    if [[ -z "${CHECK_MAINT_ROLE_ARN}" || "${CHECK_MAINT_ROLE_ARN}" == "None" ]]; then
+        CHECK_MAINT_ROLE_ARN=$(aws iam create-role \
+            --role-name "${CHECK_MAINT_ROLE}" \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+            --query 'Role.Arn' --output text)
+        aws iam attach-role-policy \
+            --role-name "${CHECK_MAINT_ROLE}" \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        info "Waiting for IAM role to propagate..."
+        sleep 10
+    fi
+
+    # Package the Lambda code
+    MAINT_ZIP=$(mktemp -d)/checkMaintenance.zip
+    cat > "$(dirname ${MAINT_ZIP})/index.js" <<'LAMBDAEOF'
+const http = require('http');
+exports.handler = async (event) => {
+  const { unicornName, rideId, traceparent, tracestate, dispatchContext } = event;
+  const endpoint = process.env.ECS_ENDPOINT;
+  if (!endpoint) return { statusCode: 503, body: { error: 'ECS_ENDPOINT not configured' } };
+  const body = JSON.stringify({ unicornName, rideId, dispatchContext: dispatchContext || null });
+  const url = new URL('/maintenance', endpoint);
+  return new Promise((resolve) => {
+    const req = http.request(url, {
+      method: 'POST', timeout: 5000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(traceparent ? { traceparent } : {}),
+        ...(tracestate ? { tracestate } : {}),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', (d) => data += d);
+      res.on('end', () => {
+        let parsed;
+        try { parsed = JSON.parse(data); } catch (_) { parsed = { raw: data }; }
+        resolve({ statusCode: res.statusCode, body: parsed });
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ statusCode: 504, body: { error: 'ECS request timed out' } }); });
+    req.on('error', (err) => resolve({ statusCode: 502, body: { error: err.message } }));
+    req.end(body);
+  });
+};
+LAMBDAEOF
+    (cd "$(dirname ${MAINT_ZIP})" && zip -q checkMaintenance.zip index.js)
+
+    aws lambda create-function \
+        --function-name "${CHECK_MAINT_FN}" \
+        --runtime nodejs20.x \
+        --handler index.handler \
+        --role "${CHECK_MAINT_ROLE_ARN}" \
+        --zip-file "fileb://${MAINT_ZIP}" \
+        --timeout 10 \
+        --memory-size 256 \
+        --environment "Variables={ECS_ENDPOINT=http://${ALB_DNS}}" \
+        --region "${REGION}" \
+        --query 'FunctionName' --output text &>/dev/null
+    rm -rf "$(dirname ${MAINT_ZIP})"
+    ok "Lambda: ${CHECK_MAINT_FN} (dark — no Dash0 layer, forwards traceparent to ECS)"
+fi
+save_state
 
 # ─────────────────────────────────────────────────────────────────────────────
 step "8/10  Creating ECS cluster"

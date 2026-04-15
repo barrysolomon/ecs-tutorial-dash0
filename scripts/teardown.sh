@@ -228,6 +228,16 @@ fi
 aws ec2 delete-route-table --route-table-id "${RT_ID}" --region "${REGION}" &>/dev/null \
     && ok "Route table deleted" || warn "Route table may already be deleted"
 
+step "Deleting checkMaintenance Lambda (dark bridge)"
+CHECK_MAINT_FN="latkas-garage-checkMaintenance"
+CHECK_MAINT_ROLE="${PREFIX:-dash0demo}-checkMaintenance-role"
+aws lambda delete-function --function-name "${CHECK_MAINT_FN}" --region "${REGION}" &>/dev/null \
+    && ok "Lambda deleted: ${CHECK_MAINT_FN}" || warn "Lambda may already be deleted"
+aws iam detach-role-policy --role-name "${CHECK_MAINT_ROLE}" \
+    --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole &>/dev/null || true
+aws iam delete-role --role-name "${CHECK_MAINT_ROLE}" &>/dev/null \
+    && ok "IAM role deleted: ${CHECK_MAINT_ROLE}" || warn "Role may already be deleted"
+
 step "Deleting RDS PostgreSQL (Latka's garage DB)"
 if [[ -n "${DB_INSTANCE_ID:-}" ]]; then
     aws rds delete-db-instance \
