@@ -657,12 +657,44 @@ const ROUTES = {
           }
         }
 
-        log('ERROR', 'Maintenance check failed', { unicorn: unicornName, rideId, diagnosis, recordId });
+        // Latka tries to order the missing part from the supplier
+        const neededPart = pick(GARAGE_PARTS);
+        let supplierResult = null;
+        await tracer.startActiveSpan('order-replacement-part', async partSpan => {
+          partSpan.setAttribute('parts.supplier', 'Unicorn Parts Warehouse');
+          partSpan.setAttribute('parts.part_name', neededPart.part_name);
+          partSpan.setAttribute('parts.part_number', neededPart.part_number);
+          partSpan.setAttribute('maintenance.unicorn', unicornName);
+          try {
+            const supplierResp = await httpGet(`https://dummyjson.com/products/search?q=${encodeURIComponent(neededPart.part_name.split(' ')[0])}&limit=3`);
+            const catalog = JSON.parse(supplierResp.body);
+            partSpan.setAttribute('parts.supplier_status', supplierResp.status);
+            partSpan.setAttribute('parts.results_found', catalog.total || 0);
+            if (catalog.total === 0 || supplierResp.status !== 200) {
+              partSpan.setAttribute('parts.available', false);
+              partSpan.setStatus({ code: SpanStatusCode.ERROR, message: `${neededPart.part_name} not available from supplier` });
+              supplierResult = { available: false, part: neededPart.part_name };
+            } else {
+              partSpan.setAttribute('parts.available', true);
+              partSpan.setAttribute('parts.estimated_delivery', '3-5 business days');
+              supplierResult = { available: true, part: neededPart.part_name, delivery: '3-5 business days' };
+            }
+          } catch (err) {
+            partSpan.setAttribute('parts.available', false);
+            partSpan.setStatus({ code: SpanStatusCode.ERROR, message: `Supplier unreachable: ${err.message}` });
+            supplierResult = { available: false, part: neededPart.part_name, error: err.message };
+            log('WARN', 'Parts supplier unreachable', { error: err.message, part: neededPart.part_name });
+          }
+          partSpan.end();
+        });
+
+        log('ERROR', 'Maintenance check failed', { unicorn: unicornName, rideId, diagnosis, recordId, partOrder: supplierResult });
         span.end();
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'error', mechanic: 'Latka Gravas', unicorn: unicornName,
           rideId, diagnosis, errorCode: 'PART_UNAVAILABLE',
+          partOrder: supplierResult,
           ...(recordId ? { recordId } : {}),
         }));
         return;
